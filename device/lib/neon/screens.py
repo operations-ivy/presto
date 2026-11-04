@@ -259,6 +259,19 @@ class Brick(Screen):
         super().enter()
         self.typed = 0
 
+    def tick(self, now_ms):
+        """gc.collect() and the SD card's statvfs take ~200 ms: once every 3 s, and here
+        (the main loop, after a switch), not in draw(), which the switch's static runs."""
+        if self.info is not None and time.ticks_diff(now_ms, self.info_at) <= 3000:
+            return
+        gc.collect()
+        try:
+            s = os.statvfs("/sd")
+            sd = "%d MB FREE" % (s[0] * s[3] // 1048576)
+        except OSError:
+            sd = "NOT MOUNTED"
+        self.info, self.info_at = (self.ctx.net.info(), gc.mem_free() // 1024, sd), now_ms
+
     def draw(self, d, now_ms):
         ctx, p = self.ctx, self.ctx.pens
         d.set_pen(p.night)
@@ -270,16 +283,10 @@ class Brick(Screen):
         d.set_pen(p.phosphor)
         d.rectangle(x0, y0, w, 1)
         d.rectangle(x0, y0 + h - 1, w, 1)
-        if self.info is None or time.ticks_diff(now_ms, self.info_at) > 3000:
-            # gc.collect() and the SD card's statvfs are slow: once every 3 s, not every frame
-            gc.collect()
-            try:
-                s = os.statvfs("/sd")
-                sd = "%d MB FREE" % (s[0] * s[3] // 1048576)
-            except OSError:
-                sd = "NOT MOUNTED"
-            self.info, self.info_at = (ctx.net.info(), gc.mem_free() // 1024, sd), now_ms
-        net, ram, sd = self.info
+        if self.info is None:  # the first visit, before tick() has run
+            net, ram, sd = {"host": "...", "ip": "...", "rssi": None}, 0, "..."
+        else:
+            net, ram, sd = self.info
         lines = [
             "> BRICK UPLINK",
             "  FEED  ..... NOT BUILT YET",
