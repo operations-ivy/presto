@@ -2,7 +2,7 @@ import calendar
 import datetime as dt
 
 import pytest
-from neon import conf, nav, sprites, tz, wx
+from neon import conf, nav, photosync, sprites, tz, wx
 
 
 # --- tz ------------------------------------------------------------------
@@ -52,13 +52,13 @@ ARMS = {"up": "weather", "left": "photos", "right": "brick", "down": "fun"}
     "dx,dy,ms,two,want",
     [
         (0, 0, 100, False, "tap"),
-        (10, -12, 500, False, "tap"),
-        (5, 5, 1500, False, None),  # long press: reserved
-        (0, -150, 200, False, "up"),
-        (0, 150, 200, False, "down"),
-        (-150, 20, 200, False, "left"),
-        (150, -20, 200, False, "right"),
-        (50, 0, 200, False, None),  # between a tap and a swipe
+        (5, -6, 500, False, "tap"),
+        (2, 2, 1500, False, None),  # long press: reserved
+        (0, -75, 200, False, "up"),
+        (0, 75, 200, False, "down"),
+        (-75, 10, 200, False, "left"),
+        (75, -10, 200, False, "right"),
+        (25, 0, 200, False, None),  # between a tap and a swipe
         (0, 0, 100, True, "two"),
     ],
 )
@@ -161,10 +161,10 @@ def test_art_uses_known_letters():
             assert letters <= set(theme.LETTERS), (name, letters - set(theme.LETTERS))
 
 
-# --- taps (navigation is by taps since 2026-11-03) ------------------------
+# --- taps (navigation is by taps since 2026-11-03; 240x240 coordinates) ----
 @pytest.mark.parametrize(
     "x,y,want",
-    [(240, 10, "up"), (240, 470, "down"), (10, 240, "left"), (470, 240, "right"), (240, 240, None), (5, 5, "up")],
+    [(120, 5, "up"), (120, 235, "down"), (5, 120, "left"), (235, 120, "right"), (120, 120, None), (2, 2, "up")],
 )
 def test_zone(x, y, want):
     assert nav.zone(x, y) == want
@@ -172,33 +172,33 @@ def test_zone(x, y, want):
 
 def test_taps_open_apps_and_come_home():
     p = nav.Plus(ARMS)
-    assert p.tap(240, 240) is None  # the middle of Home: Home's own tap
-    assert p.tap(240, 470, 0) == "fun"
+    assert p.tap(120, 120) is None  # the middle of Home: Home's own tap
+    assert p.tap(120, 235, 0) == "fun"
     p.go(nav.HOME)
-    assert p.tap(10, 240, 0) == "photos"
+    assert p.tap(5, 120, 0) == "photos"
     assert p.home_tab() == "right"
-    assert p.tap(100, 240, 100) is None and p.current == "photos"  # a photo tap, not navigation
-    assert p.tap(10, 240, 200) is None  # the far edge is not the HOME button's
+    assert p.tap(50, 120, 100) is None and p.current == "photos"  # a photo tap, not navigation
+    assert p.tap(5, 120, 200) is None  # the far edge is not the HOME button's
     assert not p.revealed(300)
 
 
 def test_hidden_home_button():
     p = nav.Plus(ARMS)
-    p.tap(240, 10, 0)  # Weather; its HOME button hides on the bottom edge
+    p.tap(120, 5, 0)  # Weather; its HOME button hides on the bottom edge
     assert p.current == "weather" and p.home_tab() == "down"
-    assert p.tap(240, 470, 1000) == nav.REVEAL and p.current == "weather"  # first tap raises it
+    assert p.tap(120, 235, 1000) == nav.REVEAL and p.current == "weather"  # first tap raises it
     assert p.revealed(1500) and p.reveal_age(1500) == 500
-    assert p.tap(240, 470, 2000) == nav.HOME  # second tap, while it's up: Home
+    assert p.tap(120, 235, 2000) == nav.HOME  # second tap, while it's up: Home
     assert not p.revealed(2001)
 
 
 def test_home_button_hides_again():
     p = nav.Plus(ARMS)
-    p.tap(470, 240, 0)  # Brick
-    assert p.tap(10, 240, 1000) == nav.REVEAL
+    p.tap(235, 120, 0)  # Brick
+    assert p.tap(5, 120, 1000) == nav.REVEAL
     later = 1000 + nav.REVEAL_MS
     assert not p.revealed(later)
-    assert p.tap(10, 240, later) == nav.REVEAL and p.current == "brick"  # raised again, not Home
+    assert p.tap(5, 120, later) == nav.REVEAL and p.current == "brick"  # raised again, not Home
 
 
 def test_ticks_diff_wraps():
@@ -206,6 +206,42 @@ def test_ticks_diff_wraps():
     assert nav.ticks_diff(50, top) == 150
     assert nav.ticks_diff(top, 50) == -150
     p = nav.Plus(ARMS)
-    p.tap(470, 240, 0)
-    assert p.tap(10, 240, top) == nav.REVEAL
+    p.tap(235, 120, 0)
+    assert p.tap(5, 120, top) == nav.REVEAL
     assert p.revealed(50)  # 150 ms later, across the wrap
+
+
+# --- photosync -----------------------------------------------------------
+def man(*photos):
+    return {
+        "version": 1,
+        "photos": [{"id": i, "rev": r, "size": 240, "rgb565": "/photo/%s.rgb565?v=%d" % (i, r)} for i, r in photos],
+    }
+
+
+def test_sync_plan_fetches_new_and_keeps_order():
+    order, fetch, delete = photosync.plan(man(("a", 1), ("b", 2), ("c", 3)), ["c-3.rgb565", "a-1.rgb565"])
+    assert order == ["a-1.rgb565", "c-3.rgb565"]  # the manifest's order, not the card's
+    assert [p["id"] for p in fetch] == ["b"] and delete == []
+
+
+def test_sync_plan_drops_deleted_and_recropped():
+    order, fetch, delete = photosync.plan(man(("a", 5)), ["a-1.rgb565", "gone-2.rgb565"])
+    assert order == [] and [p["id"] for p in fetch] == ["a"]  # a re-crop is a new rev: fetched again
+    assert delete == ["a-1.rgb565", "gone-2.rgb565"]
+
+
+def test_sync_plan_skips_frames_of_another_size():
+    m = man(("a", 1), ("b", 2))
+    m["photos"][1]["size"] = 480  # not redone at 240 yet
+    del m["photos"][0]["size"]  # a manifest from before sizes: 480
+    assert photosync.plan(m, ["b-2.rgb565"]) == ([], [], ["b-2.rgb565"])
+
+
+def test_sync_plan_empty_manifest_clears_the_card():
+    assert photosync.plan({"photos": []}, ["a-1.rgb565"]) == ([], [], ["a-1.rgb565"])
+
+
+def test_sync_settings_parse():
+    s = conf.load("device/settings.yaml", {})
+    assert s["photo_feed"] == "https://presto.brick.nozdormu.cloud" and s["feed_minutes"] == 10

@@ -9,10 +9,10 @@ from anywhere. `swipe()` is kept for gestures later.
 HOME = "home"
 OPPOSITE = {"up": "down", "down": "up", "left": "right", "right": "left"}
 
-# Tunables, in screen pixels and milliseconds.
-TAP_MAX_MOVE = 30
+# Tunables, in screen pixels (240x240, as touch reports them) and milliseconds.
+TAP_MAX_MOVE = 15
 TAP_MAX_MS = 600
-SWIPE_MIN_MOVE = 70
+SWIPE_MIN_MOVE = 35
 
 
 def classify(dx, dy, ms, two_fingers=False):
@@ -29,7 +29,7 @@ def classify(dx, dy, ms, two_fingers=False):
     return "down" if dy > 0 else "up"
 
 
-EDGE = 64  # px: the tap band along each edge (Home's arm buttons, an app's HOME tab)
+EDGE = 32  # px (of 240): the tap band along each edge (Home's arm buttons, an app's HOME tab)
 REVEAL = "reveal"  # tap() result: the hidden HOME button was raised
 REVEAL_MS = 4000  # how long a raised HOME button stays up
 _TICKS_PERIOD = 1 << 30  # MicroPython's ticks_ms wraps here
@@ -40,7 +40,7 @@ def ticks_diff(a, b):
     return ((a - b + _TICKS_PERIOD // 2) % _TICKS_PERIOD) - _TICKS_PERIOD // 2
 
 
-def zone(x, y, size=480):
+def zone(x, y, size=240):
     """Which edge band a tap is in: 'up', 'down', 'left', 'right' or None (the middle).
     Corners belong to the top and bottom bands."""
     if y < EDGE:

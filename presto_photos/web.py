@@ -57,10 +57,15 @@ def same_origin(origin: str | None, host: str | None) -> bool:
     return origin in (f"https://{host}", f"http://{host}")
 
 
+SHOWING_FOR_S = 30 * 60  # a report older than this: the Presto isn't on Photos (or is off)
+
+
 def make_handler(store: Store):
+    showing = {}  # what the Presto last said it shows: {"id", "at"} (in memory: one web pod)
+
     class Handler(brick_observe.httpserver.Observed, BaseHTTPRequestHandler):
         routes = {"/", "/api/photos", "/api/upload", "/api/crop", "/api/hide", "/api/delete", "/preview",
-                  "/master", "/manifest.json", "/photo"}
+                  "/master", "/manifest.json", "/photo", "/api/showing"}
         server_version = "presto-photos"
         protocol_version = "HTTP/1.1"
 
@@ -125,8 +130,10 @@ def make_handler(store: Store):
                 body, ctype = observe_metrics.exposition()
                 return self.send(200, body, ctype)
             if path == "/api/photos":
+                now = int(time.time())
+                on = showing.get("id") if now - showing.get("at", 0) < SHOWING_FOR_S else None
                 return self.json(200, {"photos": store.photos(), "usage": store.usage(), "limit": store.limit,
-                                       "pending": len(store.pending_uploads()), "now": int(time.time())})
+                                       "pending": len(store.pending_uploads()), "now": now, "showing": on})
             if path == "/manifest.json":
                 return self.file(store.p("manifest.json"), "application/json")
             if path in ("/preview", "/master"):
@@ -175,6 +182,9 @@ def make_handler(store: Store):
                 store.save_meta(m)
                 store.write_manifest()
                 return self.json(200, {"id": pid, "hidden": m["hidden"]})
+            if path == "/api/showing":  # from the Presto itself (it sends the page's headers)
+                showing.update(id=pid, at=int(time.time()))
+                return self.json(200, {"id": pid, "showing": True})
             if path == "/api/delete":
                 store.delete(pid)
                 log.info("photo deleted", photo=pid, device=device_of(self.headers.get("User-Agent", "")))

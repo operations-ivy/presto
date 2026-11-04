@@ -1,11 +1,12 @@
-"""Photos to the Presto's 480x480 screen, keeping as much detail as possible.
+"""Photos to the Presto's screen (the app runs at 240x240, pixel-doubled to the
+480x480 panel: the user, 2026-11-04), keeping as much detail as possible.
 
     decode (HEIC/JPEG/PNG; rotation applied)
     -> colour to sRGB (the photo's ICC profile through LittleCMS, or the exact
        Display P3 -> sRGB matrix when HEIC says P3 by NCLX code)
     -> linear light, float32
     -> crop square (chosen by detail, or the user's) and Lanczos resize, in linear light
-    -> back to sRGB, a light unsharp mask tuned for 480 px
+    -> back to sRGB, a light unsharp mask
     -> Floyd-Steinberg dither to RGB565 (what the Presto's framebuffer holds)
 
 Outputs: the RGB565 frame (raw, big-endian), a high-quality JPEG, a PNG of
@@ -24,7 +25,7 @@ from PIL import Image, ImageCms, ImageOps
 
 pillow_heif.register_heif_opener()
 
-SIZE = 480
+SIZE = 240  # the frame's side; a photo rendered at another size is redone (worker)
 MASTER = 1600
 MAX_PIXELS = 100_000_000  # refuse absurd images (decompression bombs)
 Image.MAX_IMAGE_PIXELS = MAX_PIXELS
@@ -251,10 +252,11 @@ def rgb565_to_rgb8(frame: np.ndarray) -> np.ndarray:
 # --- the whole thing -----------------------------------------------------
 @dataclass
 class Rendered:
-    rgb565: bytes  # 480*480*2, big-endian
-    jpeg: bytes  # 480x480, baseline, quality 95, 4:4:4
+    rgb565: bytes  # SIZE*SIZE*2, big-endian
+    jpeg: bytes  # SIZExSIZE, baseline, quality 95, 4:4:4
     preview_png: bytes  # exactly the RGB565 frame, as the Presto shows it
     crop: tuple[float, float, float]
+    size: int = SIZE
 
 
 def render(lin: np.ndarray, crop: tuple[float, float, float] | None = None) -> Rendered:
