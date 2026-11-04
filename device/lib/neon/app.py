@@ -198,6 +198,7 @@ def _mount_sd():
 
     try:
         spi = machine.SPI(0, sck=machine.Pin(34), mosi=machine.Pin(35), miso=machine.Pin(36))
-        os.mount(sdcard.SDCard(spi, machine.Pin(39)), "/sd")
+        # 24 MHz: the driver's default 1.3 MHz read a 460 KB file in 4.7 s, 24 MHz in 1.3 s
+        os.mount(sdcard.SDCard(spi, machine.Pin(39), baudrate=24_000_000), "/sd")
     except Exception as e:
         services.log("sd:", repr(e))

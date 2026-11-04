@@ -2,7 +2,7 @@
 
 Every few minutes: fetch manifest.json, delete what's gone (deleted or hidden on
 the page, or re-cropped: a new rev), and download what's new. Each frame is the
-raw 480x480 RGB565 the screen holds (big-endian, as the framebuffer is), so
+raw 240x240 RGB565 the screen holds (big-endian, as the framebuffer is), so
 showing one is a single read from the card, no decoding.
 
 A download goes a chunk per pass of the main loop, so the screen keeps running;
@@ -18,7 +18,7 @@ import os
 import time
 
 DIR = "/sd/feed"
-FRAME_BYTES = 480 * 480 * 2
+FRAME_BYTES = 240 * 240 * 2  # the app runs at 240x240
 EXT = ".rgb565"
 
 

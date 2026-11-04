@@ -6,14 +6,14 @@ import time
 
 from neon import fx, sprites, theme, tz, wx
 
-W = H = 480
-SKY_BOTTOM = 330
-GROUND = 452
+W = H = 240  # the Presto at its native speed: 240x240, doubled to the 480 panel
+SKY_BOTTOM = 165
+GROUND = 226
 
 
 class Home:
     name = "home"
-    frame_ms = 90  # ~11 fps: a full repaint costs ~70 ms on the Presto
+    frame_ms = 90  # ~11 fps (a full repaint costs ~10 ms at 240x240)
 
     def __init__(self, ctx):
         self.ctx = ctx
@@ -21,27 +21,32 @@ class Home:
         random.seed(1982)  # the same skyline every boot (MicroPython has no random.Random)
         r = random.randint
         # The skyline: fixed buildings, windows that come and go.
+        # Laid out in 480 space with the same seed as at full resolution (so the
+        # skyline, and SIGNS' building numbers, stay as they were), then halved.
         self.buildings = []
         x = -10
-        while x < W:
+        while x < 480:
             w = r(28, 70)
             h = r(40, 125)
-            self.buildings.append([x, GROUND - h, w, h])
+            self.buildings.append([x, 452 - h, w, h])
             x += w + r(0, 6)
         self.signs = self._place_signs(ctx, p, r)
+        self.buildings = [[b[0] // 2, b[1] // 2, (b[2] + 1) // 2, (b[3] + 1) // 2] for b in self.buildings]
+        self.sign_boxes = [tuple(v // 2 for v in box) for box in self.sign_boxes]
+        self.signs = [(sg[0], sg[1] // 2, sg[2] // 2) + tuple(sg[3:]) for sg in self.signs]
         self.windows = []
         for bx, by, bw, bh in self.buildings:
-            for wy in range(by + 6, GROUND - 6, 9):
-                for wx_ in range(bx + 4, bx + bw - 5, 7):
-                    if any(x0 - 4 <= wx_ <= x1 + 2 and y0 - 4 <= wy <= y1 + 2 for x0, y0, x1, y1 in self.sign_boxes):
+            for wy in range(by + 3, GROUND - 3, 5):
+                for wx_ in range(bx + 2, bx + bw - 3, 4):
+                    if any(x0 - 2 <= wx_ <= x1 + 1 and y0 - 2 <= wy <= y1 + 1 for x0, y0, x1, y1 in self.sign_boxes):
                         continue  # keep the wall behind a sign dark
                     if r(0, 9) < 4:
                         self.windows.append([wx_, wy, r(0, 9) < 6, r(0, 2)])
         print("[neon] skyline", [(i, b[0], b[2], b[3]) for i, b in enumerate(self.buildings)])
         print("[neon] signs", [(s[0], s[6], s[7]) for s in self.signs])
-        self.stars = [(r(0, W - 2), r(0, SKY_BOTTOM - 140), r(0, 99)) for _ in range(45)]
+        self.stars = [(r(0, W - 1), r(0, SKY_BOTTOM - 70), r(0, 99)) for _ in range(45)]
         random.seed(time.ticks_us())  # everything after this (rain, glitches) differs each boot
-        self.rain = fx.Rain(n=60, top=-20, bottom=GROUND)
+        self.rain = fx.Rain(n=60, top=-10, bottom=GROUND)
         self.car = sprites.Sprite(sprites.SPINNER)
         self.car_x = None
         self.car_next = time.ticks_add(time.ticks_ms(), 8000)
@@ -92,7 +97,7 @@ class Home:
         for i, (name, slot, orient) in enumerate(entries):
             name = str(name).upper()[:7]
             if slot is None:
-                target = int(W * (i + 1) / (len(entries) + 1))
+                target = int(480 * (i + 1) / (len(entries) + 1))
                 slot = min(
                     (k for k in range(1, n_b - 1) if k not in taken),
                     key=lambda k: abs(self.buildings[k][0] + self.buildings[k][2] // 2 - target),
@@ -110,14 +115,14 @@ class Home:
                     b[0] -= (tw + 16 - b[2]) // 2
                     b[2] = tw + 16
                 h = max(70, (tallest_v or 120) - 28)  # slightly shorter than the towers
-                b[3], b[1] = h, GROUND - h
+                b[3], b[1] = h, 452 - h
                 sx, sy = b[0] + (b[2] - tw) // 2, b[1] + 10
                 box = (sx, sy, sx + tw, sy + 16)
             else:
                 need = len(name) * 18 + 22
                 b[2] = max(b[2], 30)
                 if b[3] < need:
-                    b[3], b[1] = need, GROUND - need
+                    b[3], b[1] = need, 452 - need
                 sx, sy = b[0] + b[2] // 2 - 6, b[1] + 10
                 box = (sx, sy, sx + 12, sy + len(name) * 18)
             self.sign_boxes.append(box)
@@ -163,7 +168,7 @@ class Home:
             for sx, sy, ph in self.stars:
                 tw = (self.frame + ph) % 40
                 d.set_pen(p.text if tw < 3 else p.faint)
-                d.rectangle(sx, sy, 2 if tw < 3 else 1, 2 if tw < 3 else 1)
+                d.pixel(sx, sy)
 
         # the flying car
         self._car(d, p, now_ms)
@@ -173,7 +178,7 @@ class Home:
             d.set_pen(self.building_pen)
             d.rectangle(bx, by, bw, bh_)
             d.set_pen(self.building_edge)
-            d.rectangle(bx, by, bw, 2)
+            d.rectangle(bx, by, bw, 1)
         if self.frame % 6 == 0:
             for _ in range(3):
                 w = random.choice(self.windows)
@@ -181,7 +186,7 @@ class Home:
         for wx_, wy, on, c in self.windows:
             if on:
                 d.set_pen(self.win_pens[c])
-                d.rectangle(wx_, wy, 3, 4)
+                d.rectangle(wx_, wy, 2, 2)
         self._sign(d, p, now_ms)
         d.set_pen(p.night)
         d.rectangle(0, GROUND, W, H - GROUND)
@@ -198,13 +203,13 @@ class Home:
     def _car(self, d, p, now_ms):
         if self.car_x is None:
             if time.ticks_diff(now_ms, self.car_next) >= 0:
-                self.car_x, self.car_y = -60, random.randint(30, 110)
-                self.car_dx = random.choice((5, 7))
+                self.car_x, self.car_y = -30, random.randint(15, 55)
+                self.car_dx = random.choice((2, 3))
             return
         blink = {"R": "K", "P": "K"} if (self.frame // 3) % 2 else None
-        self.car.draw(d, p.letters, self.car_x, self.car_y, 3, blink)
+        self.car.draw(d, p.letters, self.car_x, self.car_y, 2, blink)
         self.car_x += self.car_dx
-        if self.car_x > W + 10:
+        if self.car_x > W + 5:
             self.car_x = None
             self.car_next = time.ticks_add(now_ms, random.randint(30000, 70000))
 
@@ -216,17 +221,17 @@ class Home:
                 continue
             if orient == "h":
                 d.set_pen(halo)
-                d.text(name, sx - 1, sy - 1, 480, 2)
-                d.rectangle(sx - 3, sy + 18, len(name) * 12 + 4, 2)
+                d.text(name, sx - 1, sy - 1, W, 1)
+                d.rectangle(sx - 2, sy + 9, len(name) * 6 + 2, 1)
                 d.set_pen(tube)
-                d.text(name, sx, sy, 480, 2)
-                d.rectangle(sx - 2, sy + 18, len(name) * 12 + 2, 1)  # the tube's underline
+                d.text(name, sx, sy, W, 1)
+                d.rectangle(sx - 1, sy + 9, len(name) * 6, 1)  # the tube's underline
                 continue
             for i, ch in enumerate(name):
                 d.set_pen(halo)
-                d.character(ord(ch), sx - 1, sy + i * 18 - 1, 2)
+                d.character(ord(ch), sx - 1, sy + i * 9 - 1, 1)
                 d.set_pen(tube)
-                d.character(ord(ch), sx, sy + i * 18, 2)
+                d.character(ord(ch), sx, sy + i * 9, 1)
 
     def _clock(self, d, p, now_ms):
         ctx = self.ctx
@@ -241,12 +246,12 @@ class Home:
             date = tz.date_line(lt)
         else:
             s, date = "--:--", "SYNCING TIME" if ctx.net.up else "NO SIGNAL"
-        scale = 11
-        x = (W - d.measure_text(s, scale) - (34 if ampm else 0)) // 2
-        y = 60
+        scale = 5
+        x = (W - d.measure_text(s, scale) - (26 if ampm else 0)) // 2
+        y = 30
         if ampm:
             d.set_pen(p.magenta)
-            d.text(ampm, x + d.measure_text(s, scale) + 8, y + 52, 480, 3)
+            d.text(ampm, x + d.measure_text(s, scale) + 4, y + 24, W, 2)
         since = time.ticks_diff(now_ms, self.entered_at)
         # a neon tube striking for the first second, then a faint hum
         if since < 1100:
@@ -254,46 +259,46 @@ class Home:
         else:
             flicker = 0.7 if random.random() < 0.03 else 1.0
         if time.ticks_diff(now_ms, self.glitch_at) >= 0:
-            fx.glitch_text(d, p, s, x, y, scale, random.randint(3, 7))
+            fx.glitch_text(d, p, s, x, y, scale, random.randint(2, 4))
             if time.ticks_diff(now_ms, self.glitch_at) > 350:
                 self.glitch_at = time.ticks_add(now_ms, random.randint(18000, 32000))
         else:
             fx.neon_text(d, p, s, x, y, scale, p.cyan, p.cyan_glow, flicker)
-        fx.centered(d, date, y + 100, 3, p.amber)
+        fx.centered(d, date, y + 48, 2, p.amber)
 
     def _forecast(self, d, p):
         ctx = self.ctx
         s = ctx.weather.summary
         kind = ctx.weather.kind
-        y = 205
+        y = 102
         # the icon: animated, two frames
         alt = (self.frame // 5) % 2
-        ix = 96
+        ix = 44
         if kind in ("clear", "partly"):
-            self.icons["sun" if s and s.get("is_day") else "moon"].draw(d, p.letters, ix, y, 3)
+            self.icons["sun" if s and s.get("is_day") else "moon"].draw(d, p.letters, ix, y, 2)
         else:
-            self.icons["cloud"].draw(d, p.letters, ix, y, 3)
+            self.icons["cloud"].draw(d, p.letters, ix, y, 2)
             if kind in ("rain", "storm"):
-                self.icons["rain_b" if alt else "rain_a"].draw(d, p.letters, ix, y + 26, 3)
+                self.icons["rain_b" if alt else "rain_a"].draw(d, p.letters, ix, y + 17, 2)
             if kind == "storm" and alt:
-                self.icons["bolt"].draw(d, p.letters, ix, y + 18, 3)
+                self.icons["bolt"].draw(d, p.letters, ix, y + 12, 2)
             if kind == "snow":
-                self.icons["snow_b" if alt else "snow_a"].draw(d, p.letters, ix, y + 26, 3)
+                self.icons["snow_b" if alt else "snow_a"].draw(d, p.letters, ix, y + 17, 2)
             if kind == "fog":
-                self.icons["fog"].draw(d, p.letters, ix, y + 20, 3)
-        tx = 154
+                self.icons["fog"].draw(d, p.letters, ix, y + 13, 2)
+        tx = 82
         d.set_pen(p.text)
         if not ctx.weather.configured:
-            d.text("SET LATITUDE/", tx, y + 2, 300, 2)
-            d.text("LONGITUDE", tx, y + 20, 300, 2)
+            d.text("SET LATITUDE/", tx, y + 1, 150, 1)
+            d.text("LONGITUDE", tx, y + 10, 150, 1)
         else:
-            d.text(wx.line(s, ""), tx, y + 2, 320, 3)
+            d.text(wx.line(s, ""), tx, y + 1, 158, 2)
             d.set_pen(p.dim)
-            d.text(wx.LABELS.get(kind, "NO DATA"), tx, y + 30, 320, 2)
+            d.text(wx.LABELS.get(kind, "NO DATA"), tx, y + 19, 158, 1)
         room = ctx.room
         if room.temp is not None:
             d.set_pen(p.sodium)
-            d.text("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), tx, y + 50, 320, 2)
+            d.text("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), tx, y + 30, 158, 1)
 
     def _arms(self, d, p, now_ms):
         # the app names, plain; the arrows fade slowly green <-> black (a ~3 s breath)
@@ -305,21 +310,21 @@ class Home:
 
         def name(s, x, y):  # tap anywhere in that edge's band to open the app
             d.set_pen(p.night)
-            d.text(s, x + 1, y + 1, 480, 2)  # a shadow, so it reads over the skyline
+            d.text(s, x + 1, y + 1, W, 1)  # a shadow, so it reads over the skyline
             d.set_pen(p.text)
-            d.text(s, x, y, 480, 2)
+            d.text(s, x, y, W, 1)
 
         up = labels[arms["up"]]
         d.set_pen(chev)
-        d.text("^", (W - 12) // 2, 4, 480, 2)
-        name(up, (W - d.measure_text(up, 2)) // 2, 22)
+        d.text("^", (W - 6) // 2, 2, W, 1)
+        name(up, (W - d.measure_text(up, 1)) // 2, 11)
         dn = labels[arms["down"]]
-        name(dn, (W - d.measure_text(dn, 2)) // 2, 438)
+        name(dn, (W - d.measure_text(dn, 1)) // 2, 219)
         d.set_pen(chev)
-        d.text("v", (W - 12) // 2, 460, 480, 2)
-        d.text("<", 4, 290, 480, 3)
-        name(labels[arms["left"]], 24, 293)
+        d.text("v", (W - 6) // 2, 230, W, 1)
+        d.text("<", 2, 144, W, 2)
+        name(labels[arms["left"]], 14, 147)
         rt = labels[arms["right"]]
-        name(rt, W - 28 - d.measure_text(rt, 2), 293)
+        name(rt, W - 15 - d.measure_text(rt, 1), 147)
         d.set_pen(chev)
-        d.text(">", W - 20, 290, 480, 3)
+        d.text(">", W - 12, 144, W, 2)

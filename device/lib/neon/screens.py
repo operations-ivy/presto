@@ -7,7 +7,7 @@ import time
 
 from neon import fx, theme, wx
 
-W = H = 480
+W = H = 240
 
 
 class Screen:
@@ -58,35 +58,35 @@ class Weather(Screen):
         top = theme.PALETTE["dust"] if warm else (6, 70, 90)
         for i in range(10):
             d.set_pen(p.rgb(*theme.mix(theme.PALETTE["night"], top, (9 - i) / 14)))
-            d.rectangle(0, i * 48, W, 48)
-        fx.centered(d, "OUTSIDE", 26, 3, p.text)
+            d.rectangle(0, i * 24, W, 24)
+        fx.centered(d, "OUTSIDE", 12, 2, p.text)
         if s and s.get("now") is not None:
             t = "%d" % round(s["now"])
-            sc = 14
+            sc = 7
             x = (W - d.measure_text(t, sc)) // 2
-            fx.neon_text(d, p, t, x, 64, sc, p.text, p.rgb(120, 50, 20) if warm else p.rgb(10, 60, 80))
-            fx.centered(d, wx.line(s, "") + "   " + wx.LABELS.get(s["kind"], ""), 190, 2, p.text)
+            fx.neon_text(d, p, t, x, 32, sc, p.text, p.rgb(120, 50, 20) if warm else p.rgb(10, 60, 80))
+            fx.centered(d, wx.line(s, "") + "   " + wx.LABELS.get(s["kind"], ""), 95, 1, p.text)
         else:
-            fx.centered(d, "NO FORECAST" if ctx.weather.configured else "SET LATITUDE/LONGITUDE", 110, 3, p.dim)
-            fx.centered(d, "in secrets.py on the Presto", 150, 2, p.faint)
+            fx.centered(d, "NO FORECAST" if ctx.weather.configured else "SET LATITUDE/LONGITUDE", 55, 2, p.dim)
+            fx.centered(d, "in secrets.py on the Presto", 75, 1, p.faint)
         self._holo(d, p, now_ms)
 
     def _holo(self, d, p, now_ms):
         room = self.ctx.room
-        x0, y0, w, h = 30, 240, 420, 200
+        x0, y0, w, h = 15, 120, 210, 100
         flick = random.random() < 0.06
         edge = p.cyan if not flick else p.magenta
         d.set_pen(p.rgb(8, 14, 30))
         d.rectangle(x0, y0, w, h)
         d.set_pen(edge)
-        for (a, b, c, e) in ((x0, y0, w, 2), (x0, y0 + h - 2, w, 2), (x0, y0, 2, h), (x0 + w - 2, y0, 2, h)):
+        for (a, b, c, e) in ((x0, y0, w, 1), (x0, y0 + h - 1, w, 1), (x0, y0, 1, h), (x0 + w - 1, y0, 1, h)):
             d.rectangle(a, b, c, e)
         d.set_pen(p.rgb(20, 40, 70))
-        off = (now_ms // 60) % 6
-        for yy in range(y0 + 4 + off, y0 + h - 2, 6):  # drifting hologram scanlines
-            d.line(x0 + 2, yy, x0 + w - 3, yy)
+        off = (now_ms // 60) % 3
+        for yy in range(y0 + 2 + off, y0 + h - 1, 3):  # drifting hologram scanlines
+            d.line(x0 + 1, yy, x0 + w - 2, yy)
         d.set_pen(p.magenta)
-        d.text("ROOM", x0 + 14, y0 + 12, 400, 2)
+        d.text("ROOM", x0 + 7, y0 + 6, 200, 1)
         rows = []
         if room.temp is not None:
             rows.append(("TEMP", "%.1f" % room.temp))
@@ -97,21 +97,26 @@ class Weather(Screen):
         if not rows:
             rows.append(("SENSORS", "OFFLINE"))
         for i, (k, v) in enumerate(rows):
-            yy = y0 + 42 + i * 36
+            yy = y0 + 21 + i * 18
             d.set_pen(p.dim)
-            d.text(k, x0 + 14, yy + 6, 200, 2)
+            d.text(k, x0 + 7, yy + 3, 100, 1)
             d.set_pen(p.text if not flick else p.cyan)
-            d.text(v, x0 + 200, yy, 220, 4)
+            d.text(v, x0 + 100, yy, 110, 2)
 
 
 class Photos(Screen):
-    """The upload page's photos (raw RGB565 frames synced to /sd/feed), else the JPEGs
-    in /sd/gallery. Tap right half: next; left half: previous."""
+    """The upload page's photos (240x240 RGB565 frames synced to /sd/feed), else the
+    JPEGs in /sd/gallery. Tap right half: next; left half: previous.
+
+    The photo on screen is held in RAM: every redraw (the switch's static, the HOME
+    button) is a 7 ms copy, and the card is read only when the photo changes
+    (a raw frame ~0.25 s; a JPEG decode ~2 s, once)."""
 
     name, label = "photos", "PHOTOS"
     frame_ms = None
     led_hue = None
     REPORT_AFTER_MS = 20000  # tell the page once a photo has stayed up this long
+    FRAME = W * H * 2
 
     def __init__(self, ctx):
         super().__init__(ctx)
@@ -123,9 +128,11 @@ class Photos(Screen):
         self.shown_at = 0
         self.seen = -1  # the feed's version this list was made from
         self.reported = None
-        self.frame = bytearray(480 * 480 * 2)  # the photo on screen (PSRAM has room)
-        self.held = None
+        self.frame = bytearray(self.FRAME)
+        self.held = None  # the path whose picture is in self.frame
+        self.error = None
         self.rescan()
+        self._hold()  # at boot, so the first visit is instant
 
     def rescan(self):
         feed = self.ctx.feed
@@ -142,21 +149,59 @@ class Photos(Screen):
         names = [f[2] for f in self.files]
         self.i = names.index(cur) if cur in names else 0  # stay on the same photo if it's still there
 
+    def _hold(self):
+        """Load the current photo into self.frame (the slow part, once per photo)."""
+        if not self.files:
+            self.held = None
+            return
+        kind, path, name = self.files[self.i]
+        if self.held == path:
+            return
+        d = self.ctx.display
+        t0 = time.ticks_ms()
+        try:
+            if kind == "raw":
+                with open(path, "rb") as f:
+                    if f.readinto(self.frame) != self.FRAME:
+                        raise OSError("short frame")
+            else:  # decode into the screen buffer once, then keep a copy
+                d.set_pen(self.ctx.pens.night)
+                d.clear()
+                import jpegdec
+
+                self.jpeg.open_file(path)
+                w = self.jpeg.get_width()
+                scale = jpegdec.JPEG_SCALE_HALF if w > W else jpegdec.JPEG_SCALE_FULL
+                sw = w // 2 if w > W else w
+                sh = self.jpeg.get_height() // 2 if w > W else self.jpeg.get_height()
+                self.jpeg.decode(max(0, (W - sw) // 2), max(0, (H - sh) // 2), scale, dither=True)
+                self.frame[:] = memoryview(d)
+            self.held, self.error = path, None
+        except Exception as e:
+            self.held, self.error = None, repr(e)[:40]
+        print("[neon] photo %s in %d ms" % (name, time.ticks_diff(time.ticks_ms(), t0)))
+
     def tap(self, x, y):
         if self.files:
             self.i = (self.i + (1 if x > W // 2 else -1)) % len(self.files)
+            self.shown_at = time.ticks_ms()
+            self._hold()
             self.dirty = True
 
     def tick(self, now_ms):
         feed = self.ctx.feed
         if feed.version != self.seen:
-            before = self.files[self.i][2] if self.files else None
+            before = self.files[self.i][1] if self.files else None
             self.rescan()
-            if (self.files[self.i][2] if self.files else None) != before or len(self.files) == 1:
+            if (self.files[self.i][1] if self.files else None) != before:
+                self._hold()
                 self.dirty = True
         if self.files and time.ticks_diff(now_ms, self.shown_at) > self.ctx.settings["photo_seconds"] * 1000:
-            self.i = (self.i + 1) % len(self.files)
-            self.dirty = True
+            self.shown_at = now_ms
+            if len(self.files) > 1:
+                self.i = (self.i + 1) % len(self.files)
+                self._hold()
+                self.dirty = True
         if (
             self.files
             and self.files[self.i][0] == "raw"
@@ -168,42 +213,32 @@ class Photos(Screen):
             self.reported = self.files[self.i][2]
             feed.report(self.reported)
 
+    def enter(self):
+        super().enter()
+        self.shown_at = time.ticks_ms()
+
     def draw(self, d, now_ms):
         p = self.ctx.pens
-        self.shown_at = now_ms
         if not self.files:
             d.set_pen(p.night)
             d.clear()
-            fx.centered(d, "NO PHOTOS", 200, 4, p.dim)
-            fx.centered(d, "add some on the upload page", 250, 2, p.faint)
+            fx.centered(d, "NO PHOTOS", 100, 2, p.dim)
+            fx.centered(d, "add some on the upload page", 125, 1, p.faint)
             return
-        kind, path, name = self.files[self.i]
-        try:
-            if kind == "raw":  # the frame as the screen holds it: no decoding
-                if self.held != path:  # read from the card once per photo (it's ~0.5 s);
-                    with open(path, "rb") as f:  # every redraw after that (transitions,
-                        f.readinto(self.frame)  # the HOME tab) is a memory copy
-                    self.held = path
-                memoryview(d)[:] = self.frame
-            else:
-                d.set_pen(p.night)
-                d.clear()
-                import jpegdec
-
-                self.jpeg.open_file(path)
-                w, h = self.jpeg.get_width(), self.jpeg.get_height()
-                self.jpeg.decode(max(0, (W - w) // 2), max(0, (H - h) // 2), jpegdec.JPEG_SCALE_FULL, dither=True)
-        except Exception as e:
-            self.held = None
+        if self.held is None:
+            self._hold()
+        if self.held is None:
             d.set_pen(p.night)
             d.clear()
-            fx.centered(d, "CAN'T SHOW " + name[:20], 200, 2, p.red)
-            fx.centered(d, repr(e)[:40], 230, 2, p.faint)
-        if kind == "raw" and self.ctx.feed.stale:
+            fx.centered(d, "CAN'T SHOW " + self.files[self.i][2][:20], 100, 1, p.red)
+            fx.centered(d, self.error or "", 115, 1, p.faint)
+            return
+        memoryview(d)[:] = self.frame
+        if self.files[self.i][0] == "raw" and self.ctx.feed.stale:
             d.set_pen(p.night)
-            d.rectangle(W - 104, H - 20, 104, 20)
+            d.rectangle(W - 64, H - 11, 64, 11)
             d.set_pen(p.faint)
-            d.text("FEED STALE", W - 98, H - 16, 200, 2)
+            d.text("FEED STALE", W - 61, H - 9, 100, 1)
 
 
 class Brick(Screen):
@@ -216,7 +251,7 @@ class Brick(Screen):
 
     def __init__(self, ctx):
         super().__init__(ctx)
-        self.rain = fx.GlyphRain(cols=16, scale=2, top=0, bottom=H, length=(5, 10))
+        self.rain = fx.GlyphRain(cols=16, scale=1, top=0, bottom=H, length=(5, 10))
         self.typed = 0
         self.info, self.info_at = None, 0
 
@@ -229,12 +264,12 @@ class Brick(Screen):
         d.set_pen(p.night)
         d.clear()
         self.rain.step_draw(d, p)
-        x0, y0, w, h = 50, 110, 380, 260
+        x0, y0, w, h = 25, 55, 190, 130
         d.set_pen(p.rgb(2, 10, 6))
         d.rectangle(x0, y0, w, h)
         d.set_pen(p.phosphor)
-        d.rectangle(x0, y0, w, 2)
-        d.rectangle(x0, y0 + h - 2, w, 2)
+        d.rectangle(x0, y0, w, 1)
+        d.rectangle(x0, y0 + h - 1, w, 1)
         if self.info is None or time.ticks_diff(now_ms, self.info_at) > 3000:
             # gc.collect() and the SD card's statvfs are slow: once every 3 s, not every frame
             gc.collect()
@@ -264,10 +299,10 @@ class Brick(Screen):
             if left < 0 and len(shown) < len(line) and shown:
                 shown = shown[:-1] + random.choice(fx.GLYPHS)
             d.set_pen(p.phosphor if line.startswith(">") else p.text)
-            d.text(shown, x0 + 14, y0 + 14 + i * 27, w - 20, 2)
+            d.text(shown, x0 + 7, y0 + 7 + i * 13, w - 10, 1)
         if (now_ms // 500) % 2:
             d.set_pen(p.phosphor)
-            d.rectangle(x0 + 14, y0 + h - 22, 10, 14)
+            d.rectangle(x0 + 7, y0 + h - 11, 5, 7)
 
 
 class Fun(Screen):
@@ -282,12 +317,12 @@ class Fun(Screen):
         d.set_pen(p.night)
         d.clear()
         for _ in range(26):  # static: random bars of noise
-            y = random.randint(0, H - 4)
+            y = random.randint(0, H - 2)
             d.set_pen(random.choice((p.line, p.faint, p.panel, p.violet)))
-            d.rectangle(random.randint(-50, W - 40), y, random.randint(40, 260), random.randint(1, 4))
-        jitter = random.randint(-3, 3) if random.random() < 0.3 else 0
+            d.rectangle(random.randint(-25, W - 20), y, random.randint(20, 130), random.randint(1, 2))
+        jitter = random.randint(-2, 2) if random.random() < 0.3 else 0
         if random.random() < 0.15:
-            fx.glitch_text(d, p, "SIGNAL LOST", 70 + jitter, 200, 5, 4)
+            fx.glitch_text(d, p, "SIGNAL LOST", (W - d.measure_text("SIGNAL LOST", 3)) // 2 + jitter, 100, 3, 2)
         else:
-            fx.centered(d, "SIGNAL LOST", 200, 5, p.violet)
-        fx.centered(d, "the fun one: ideas wanted", 260, 2, p.dim)
+            fx.centered(d, "SIGNAL LOST", 100, 3, p.violet)
+        fx.centered(d, "the fun one: ideas wanted", 130, 1, p.dim)
