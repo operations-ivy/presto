@@ -1,12 +1,18 @@
 [tool.poetry]
 name = "presto"
-version = "0.1.0"
-description = "The brick homelab's Pimoroni Presto: a neon desk display (MicroPython app, tools, tests)"
+version = "0.2.0"
+description = "The brick homelab's Pimoroni Presto: a neon desk display (MicroPython app), and presto-photos (its upload page and photo converter)"
 authors = ["Patrick White <whitep@alumni.vcu.edu>"]
 package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.11"
+# presto-photos (the image's only code; the device app is MicroPython)
+pillow = "^12.0"
+pillow-heif = "^1.1"
+numpy = "^2.2"
+prometheus-client = "^0.22.0"
+brick-observe = { git = "https://github.com/operations-ivy/brick-observe.git", tag = "v0.1.1", extras = ["metrics", "tracing"] }
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^4.2.0"

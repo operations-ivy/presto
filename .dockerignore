@@ -1,0 +1,5 @@
+*
+!pyproject.toml
+!poetry.lock
+!presto_photos/
+presto_photos/__pycache__/

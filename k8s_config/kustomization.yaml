@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Argo CD renders this directory with Kustomize (it detects this file). Both
+# workloads reference the bare image `whitepatrick/presto-photos`; the tag is
+# stamped from the single `images:` entry below, so a release bumps one line
+# here (plus the version in pyproject.toml). Build the tag first: Jenkins'
+# build-branches builds a release/ branch's newTag. Argo prunes, so every
+# manifest must be listed.
+
+resources:
+  - namespace.yaml
+  - pvc.yaml
+  - networkpolicy.yaml
+  - web-deployment.yaml
+  - web-service.yaml
+  - ingress.yaml
+  - convert-deployment.yaml
+  - podmonitor.yaml
+  - dashboard-web.yaml
+
+images:
+  - name: whitepatrick/presto-photos
+    newTag: 0.2.0

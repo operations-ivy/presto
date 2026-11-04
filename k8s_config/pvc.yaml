@@ -1,0 +1,19 @@
+# The photo store (presto_photos/store.py): uploads, the converted frames, the
+# ~1600 px masters, and originals for 7 days. The service caps itself at 5 GB
+# (PHOTOS_LIMIT_GB), so it never fills this. local-path, so on brick2000's NVMe
+# like every other PV; the web and converter pods share it there.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: presto-photos
+  namespace: presto
+  annotations:
+    # The household's photos: Argo CD never prunes or deletes them, even if this
+    # file or the Application goes away (brick-k8s-config#42).
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 6Gi
