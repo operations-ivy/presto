@@ -131,7 +131,7 @@ input[type=range]{width:100%;accent-color:var(--cyan);margin:12px 0 4px}
 
   <button class="add" id="add" type="button"><span class="plus">+</span> ADD PHOTOS</button>
   <input id="file" type="file" multiple accept="image/heic,image/heif,image/jpeg,image/png" hidden>
-  <p class="hint">HEIC straight from the iPhone keeps the most detail. Each photo becomes a 480&times;480 frame, dithered for the Presto's screen.</p>
+  <p class="hint">Pick any photos. Each one becomes a 480&times;480 frame, dithered for the Presto's screen.</p>
 
   <div class="queue" id="queue"></div>
 
@@ -289,7 +289,9 @@ function facts(p){
   let h = "";
   if (s.format) h += (s.format === "MPO" ? "JPEG (+HDR gain map)" : s.format) + " " + s.width + "&times;" + s.height + " &middot; " + esc(s.colour) + " &middot; " + s.bit_depth + "-bit<br>";
   if (u.filename) h += esc(u.filename) + " &middot; " + ((u.bytes || 0) / 1048576).toFixed(1) + " MB &middot; from " + esc(u.device || "?") + "<br>";
-  if (p.downgraded) h += '<span class="warn">Safari sent this as JPEG, not the original HEIC (it converts on upload). Full resolution and colour came through, so at 480 px it looks the same.</span><br>';
+  // Safari converts HEIC to JPEG on upload. Measured on the same photo both ways: identical sharpness and
+  // colour at 480 px (2026-11-03), so it's just a fact here, not a warning.
+  if (p.downgraded) h += "Converted to JPEG by Safari: no visible difference on the Presto.<br>";
   if (p.status === "failed") h += '<span class="bad">' + esc(p.error || "failed") + "</span><br>";
   if (p.hidden) h += "Hidden: kept here, not on the frame.<br>";
   h += p.crop_auto === false ? "Crop: yours." : "Crop: chosen automatically (the most detail).";
