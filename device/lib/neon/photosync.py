@@ -63,6 +63,7 @@ class Feed:
         self.next_at = 0
         self.dl = None  # (response, file, name, got)
         self.buf = bytearray(self.CHUNK)
+        self.mv = memoryview(self.buf)
         self.ready = False
         if self.url:
             self._load()
@@ -185,9 +186,10 @@ class Feed:
     def _read(self):
         r, f, name, got = self.dl
         try:
-            k = r.raw.readinto(self.buf, min(self.CHUNK, FRAME_BYTES - got))
+            # MicroPython's readinto takes only the buffer: a slice of it caps the read
+            k = r.raw.readinto(self.mv[: min(self.CHUNK, FRAME_BYTES - got)])
             if k:
-                f.write(memoryview(self.buf)[:k])
+                f.write(self.mv[:k])
                 got = self.dl[3] = got + k
             if k and got < FRAME_BYTES:
                 return False  # more next pass
