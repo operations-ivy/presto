@@ -5,7 +5,7 @@ import time
 import machine
 import network
 
-from neon import tz, wx
+from neon import retry, tz, wx
 
 
 def log(*a):
@@ -13,16 +13,51 @@ def log(*a):
 
 
 class Net:
+    """Wi-Fi. start() at boot; tick() every pass brings it back when it's down
+    (presto#16: a failed boot connect used to mean offline until a restart)."""
+
     def __init__(self, secrets):
         self.secrets = secrets
         self.wlan = network.WLAN(network.STA_IF)
         self.started = False
+        self.backoff = retry.Backoff()
+        self.was_up = False
 
     def start(self):
         try:
             self.wlan.active(True)
             if not self.wlan.isconnected():
                 self.wlan.connect(self.secrets.WIFI_SSID, self.secrets.WIFI_PASSWORD)
+            self.started = True
+        except Exception as e:
+            log("wifi:", repr(e))
+
+    def _status(self):
+        try:
+            return self.wlan.status()
+        except Exception as e:
+            return repr(e)
+
+    def tick(self, now_ms):
+        """Call once per pass of the main loop. connect() doesn't block (the radio
+        joins in the background), so the screen keeps running."""
+        up = self.up
+        down_ms = self.backoff.down_ms(now_ms)
+        if up and not self.was_up and down_ms is not None:
+            log("wifi: up after %d s down, %d retries" % (down_ms // 1000, self.backoff.attempts))
+        self.was_up = up
+        if not self.backoff.step(up, now_ms):
+            return
+        # status: 1 joining, -1 failed, -2 no AP found, -3 wrong password, 0 idle
+        log("wifi: down %d s (status %s), retry %d" % (self.backoff.down_ms(now_ms) // 1000, self._status(),
+                                                      self.backoff.attempts))
+        try:
+            # Power the radio down and up: after a failed boot join it answers every
+            # connect() with status -1 (seen 2026-11-04); disconnect() alone didn't clear it.
+            self.wlan.active(False)
+            time.sleep_ms(200)
+            self.wlan.active(True)
+            self.wlan.connect(self.secrets.WIFI_SSID, self.secrets.WIFI_PASSWORD)
             self.started = True
         except Exception as e:
             log("wifi:", repr(e))

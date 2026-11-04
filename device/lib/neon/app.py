@@ -146,6 +146,7 @@ def run(presto, secrets):
             last_touch = now
 
         # --- services (between frames) ---
+        ctx.net.tick(now)
         ctx.clock.sync(ctx.net)
         if ctx.weather.due(ctx.net):
             ctx.weather.fetch(ctx.clock)

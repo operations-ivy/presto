@@ -2,7 +2,7 @@ import calendar
 import datetime as dt
 
 import pytest
-from neon import conf, nav, photosync, sprites, tz, wx
+from neon import conf, nav, photosync, retry, sprites, tz, wx
 
 
 # --- tz ------------------------------------------------------------------
@@ -245,3 +245,39 @@ def test_sync_plan_empty_manifest_clears_the_card():
 def test_sync_settings_parse():
     s = conf.load("device/settings.yaml", {})
     assert s["photo_feed"] == "https://presto.brick.nozdormu.cloud" and s["feed_minutes"] == 10
+
+
+# --- retry (Wi-Fi, presto#16) ---------------------------------------------
+def retries(b, up_at, until_ms, step_ms=1000, start=0):
+    """The times step() said retry, polling every step_ms; up_at(t) says whether the link is up."""
+    return [t for t in range(start, until_ms, step_ms) if b.step(up_at(t), t)]
+
+
+def test_backoff_waits_then_doubles_to_a_cap():
+    b = retry.Backoff()
+    got = retries(b, lambda t: False, 1_200_000)
+    assert got[:5] == [20000, 50000, 110000, 230000, 470000]  # grace, then +30, +60, +120, +240 s
+    assert got[5] - got[4] == 300000 and got[6] - got[5] == 300000  # capped at 5 min
+    assert b.attempts == len(got)
+
+
+def test_backoff_quiet_while_up_and_resets():
+    b = retry.Backoff()
+    assert retries(b, lambda t: True, 600_000) == [] and b.down_ms(5) is None
+    retries(b, lambda t: False, 200_000)  # down a while: the wait has grown
+    assert b.attempts == 3 and b.down_ms(200_000) == 200_000
+    assert not b.step(True, 200_000) and b.attempts == 0  # back up: all reset
+    assert retries(b, lambda t: False, 260_000, start=201_000) == [221_000, 251_000]  # grace and 30 s again
+
+
+def test_backoff_a_short_drop_needs_no_retry():
+    b = retry.Backoff()
+    assert retries(b, lambda t: not (5000 <= t < 15000), 100_000) == []  # back within the grace
+
+
+def test_backoff_across_the_ticks_wrap():
+    top = (1 << 30) - 5000
+    b = retry.Backoff()
+    assert not b.step(False, top)
+    assert not b.step(False, 10000)  # 15 s later, across the wrap: still in the grace
+    assert b.step(False, 15001) and b.down_ms(15001) == 20001
