@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "presto"
+version = "0.1.0"
+description = "The brick homelab's Pimoroni Presto: a neon desk display (MicroPython app, tools, tests)"
+authors = ["Patrick White <whitep@alumni.vcu.edu>"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+[tool.poetry.group.dev.dependencies]
+pre-commit = "^4.2.0"
+pytest = "^8.3.5"
+mpremote = "^1.24"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry>=1.3.2"]
+build-backend = "poetry.masonry.api"
