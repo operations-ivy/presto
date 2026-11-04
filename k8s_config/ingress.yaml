@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: presto-photos-web
+  namespace: presto
+spec:
+  ingressClassName: traefik
+  rules:
+  # Through the cluster's front door (brick-k8s-config front-door/).
+  - host: presto.brick.nozdormu.cloud
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: presto-photos-web
+            port:
+              number: 80

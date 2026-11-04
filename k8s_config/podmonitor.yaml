@@ -1,0 +1,17 @@
+# Prometheus scrapes /metrics on both pods: request metrics (brick-observe),
+# uploads by result, conversions by result and their time, the store's size.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: presto-photos
+  namespace: presto
+spec:
+  selector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values: [presto-photos-web, presto-photos-convert]
+  podMetricsEndpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
