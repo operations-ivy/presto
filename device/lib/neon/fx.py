@@ -121,19 +121,23 @@ def draw_static(display, pens, cover):
         display.rectangle(0, random.randint(0, 478), 480, 1)
 
 
-def home_tab(display, pens, edge, now_ms):
-    """The HOME tab an app shows on the edge facing Home (tap it to go back).
-    It fills the middle of that edge's tap band (nav.EDGE) and pulses gently."""
+def home_tab(display, pens, edge, now_ms, rise=1.0):
+    """The HOME button, raised by a tap on the edge facing Home (tap again to go
+    back). It sits in that edge's tap band (nav.EDGE), rising out of the edge
+    (rise 0 -> 1, eased) and pulsing gently once up."""
     pulse = (now_ms // 600) % 2
     ring = pens.cyan if pulse else pens.cyan_glow
+    e = 1 - (1 - rise) * (1 - rise)  # ease out
     if edge in ("up", "down"):
         w, h = 150, 40
         x = (480 - w) // 2
-        y = 8 if edge == "up" else 480 - 8 - h
+        hidden = int((h + 8) * (1 - e))
+        y = 8 - hidden if edge == "up" else 480 - 8 - h + hidden
         label = "^ HOME" if edge == "up" else "v HOME"
     else:
         w, h = 44, 150
-        x = 6 if edge == "left" else 480 - 6 - w
+        hidden = int((w + 6) * (1 - e))
+        x = 6 - hidden if edge == "left" else 480 - 6 - w + hidden
         y = (480 - h) // 2
         label = None
     display.set_pen(pens.night)

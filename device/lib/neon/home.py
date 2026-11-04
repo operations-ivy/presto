@@ -63,7 +63,6 @@ class Home:
         self.win_pens = (p.sodium, p.amber, p.cyan)
         self.rain_far = p.rgb(40, 60, 90)
         self.rain_near = p.rgb(90, 130, 170)
-        self.label_bg = p.rgb(10, 6, 22)
         self.entered_at = 0
         self.glitch_at = time.ticks_add(time.ticks_ms(), 20000)
         self.frame = 0
@@ -297,39 +296,30 @@ class Home:
             d.text("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), tx, y + 50, 320, 2)
 
     def _arms(self, d, p, now_ms):
-        pulse = (now_ms // 450) % 2
-        chev = p.magenta if pulse else p.rgb(110, 18, 50)
+        # the app names, plain; the arrows fade slowly green <-> black (a ~3 s breath)
+        level = (1 + math.sin(now_ms / 480)) / 2
+        step = int(level * 15)  # 16 shades, so only 16 pens are ever made
+        chev = p.rgb(*theme.mix(theme.PALETTE["night"], theme.PALETTE["phosphor"], step / 15))
         arms = self.ctx.arms
         labels = self.ctx.labels
 
-        def tag(s, x, y):  # a button: tap it to open that app
-            w = d.measure_text(s, 2)
-            d.set_pen(self.label_bg)
-            d.rectangle(x - 6, y - 6, w + 12, 26)
-            d.set_pen(chev)
-            d.rectangle(x - 6, y - 6, w + 12, 1)
-            d.rectangle(x - 6, y + 19, w + 12, 1)
-            d.rectangle(x - 6, y - 6, 1, 26)
-            d.rectangle(x + w + 5, y - 6, 1, 26)
+        def name(s, x, y):  # tap anywhere in that edge's band to open the app
+            d.set_pen(p.night)
+            d.text(s, x + 1, y + 1, 480, 2)  # a shadow, so it reads over the skyline
             d.set_pen(p.text)
             d.text(s, x, y, 480, 2)
-            return w
 
         up = labels[arms["up"]]
-        w = d.measure_text(up, 2)
         d.set_pen(chev)
         d.text("^", (W - 12) // 2, 4, 480, 2)
-        tag(up, (W - w) // 2, 22)
+        name(up, (W - d.measure_text(up, 2)) // 2, 22)
         dn = labels[arms["down"]]
-        w = d.measure_text(dn, 2)
-        tag(dn, (W - w) // 2, 438)
+        name(dn, (W - d.measure_text(dn, 2)) // 2, 438)
         d.set_pen(chev)
         d.text("v", (W - 12) // 2, 460, 480, 2)
-        d.set_pen(chev)
         d.text("<", 4, 290, 480, 3)
-        tag(labels[arms["left"]], 24, 293)
+        name(labels[arms["left"]], 24, 293)
         rt = labels[arms["right"]]
-        w = d.measure_text(rt, 2)
-        tag(rt, W - 28 - w, 293)
+        name(rt, W - 28 - d.measure_text(rt, 2), 293)
         d.set_pen(chev)
         d.text(">", W - 20, 290, 480, 3)

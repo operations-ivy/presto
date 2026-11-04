@@ -20,8 +20,8 @@ Navigation is by taps (swipes do nothing): each edge has a 64 px tap band.
 
 | Touch | Does |
 | --- | --- |
-| On Home, tap an edge button (WEATHER, PHOTOS, BRICK, ???) | opens that app |
-| In an app, tap the HOME tab (on the edge facing Home) | Home |
+| On Home, tap an app's name (at the edge, by its pulsing green arrow) | opens that app |
+| In an app, tap the edge facing Home | the hidden HOME button rises; tap it again within 4 s for Home |
 | Two-finger tap | Home, from anywhere |
 | Any other tap | the app's own action (Photos: right half next, left half previous; Home: glitch) |
 | No touch for `idle_seconds` | the `idle_screen` (Photos) |
