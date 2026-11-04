@@ -173,10 +173,39 @@ def test_zone(x, y, want):
 def test_taps_open_apps_and_come_home():
     p = nav.Plus(ARMS)
     assert p.tap(240, 240) is None  # the middle of Home: Home's own tap
-    assert p.tap(10, 240) == "photos"
+    assert p.tap(240, 470, 0) == "fun"
+    p.go(nav.HOME)
+    assert p.tap(10, 240, 0) == "photos"
     assert p.home_tab() == "right"
-    assert p.tap(100, 240) is None and p.current == "photos"  # a photo tap, not navigation
-    assert p.tap(10, 240) is None  # the far edge is not the HOME tab
-    assert p.tap(470, 240) == nav.HOME
-    assert p.tap(240, 10) == "weather" and p.home_tab() == "down"
-    assert p.tap(240, 470) == nav.HOME
+    assert p.tap(100, 240, 100) is None and p.current == "photos"  # a photo tap, not navigation
+    assert p.tap(10, 240, 200) is None  # the far edge is not the HOME button's
+    assert not p.revealed(300)
+
+
+def test_hidden_home_button():
+    p = nav.Plus(ARMS)
+    p.tap(240, 10, 0)  # Weather; its HOME button hides on the bottom edge
+    assert p.current == "weather" and p.home_tab() == "down"
+    assert p.tap(240, 470, 1000) == nav.REVEAL and p.current == "weather"  # first tap raises it
+    assert p.revealed(1500) and p.reveal_age(1500) == 500
+    assert p.tap(240, 470, 2000) == nav.HOME  # second tap, while it's up: Home
+    assert not p.revealed(2001)
+
+
+def test_home_button_hides_again():
+    p = nav.Plus(ARMS)
+    p.tap(470, 240, 0)  # Brick
+    assert p.tap(10, 240, 1000) == nav.REVEAL
+    later = 1000 + nav.REVEAL_MS
+    assert not p.revealed(later)
+    assert p.tap(10, 240, later) == nav.REVEAL and p.current == "brick"  # raised again, not Home
+
+
+def test_ticks_diff_wraps():
+    top = (1 << 30) - 100
+    assert nav.ticks_diff(50, top) == 150
+    assert nav.ticks_diff(top, 50) == -150
+    p = nav.Plus(ARMS)
+    p.tap(470, 240, 0)
+    assert p.tap(10, 240, top) == nav.REVEAL
+    assert p.revealed(50)  # 150 ms later, across the wrap
