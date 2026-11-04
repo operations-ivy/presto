@@ -74,9 +74,9 @@ spec:
           requests:
             cpu: 100m
             memory: 256Mi
-          limits:
+          limits:  # a 24 MP iPhone photo peaks near 550 MB; 48 MP about double
             cpu: "2"
-            memory: 1Gi
+            memory: 2Gi
         # Prometheus' metrics server answers every path, /health included.
         livenessProbe:
           httpGet:

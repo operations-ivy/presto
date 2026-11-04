@@ -84,12 +84,21 @@ class Store:
         return sorted(ups, key=lambda u: self.p("inbox", u + ".upload").stat().st_mtime)
 
     def take_upload(self, up: str) -> tuple[bytes, dict]:
-        data = self.p("inbox", up + ".upload").read_bytes()
+        return self.p("inbox", up + ".upload").read_bytes(), self._upload_info(up)
+
+    def _upload_info(self, up: str) -> dict:
         try:
-            info = json.loads(self.p("inbox", up + ".json").read_text())
+            return json.loads(self.p("inbox", up + ".json").read_text())
         except (FileNotFoundError, ValueError):
-            info = {}
-        return data, info
+            return {}
+
+    def note_attempt(self, up: str) -> int:
+        """Count a conversion attempt on an upload (saved before decoding, so an
+        attempt that kills the process still counts); returns the count so far."""
+        info = self._upload_info(up)
+        info["attempts"] = int(info.get("attempts", 0)) + 1
+        write_atomic(self.p("inbox", up + ".json"), json.dumps(info).encode())
+        return info["attempts"]
 
     def drop_upload(self, up: str) -> None:
         for ext in (".upload", ".json", ".part"):

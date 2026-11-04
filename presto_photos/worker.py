@@ -20,6 +20,9 @@ from .store import Store, photo_id
 log = brick_observe.get_logger(__name__)
 
 POLL_S = 2.0
+# An upload that has killed the converter this many times (out of memory, a
+# decoder crash) is given up on, so one file can't keep it restarting.
+MAX_ATTEMPTS = 3
 
 CONVERTED = Counter("photos_converted_total", "Photos converted, by result", ["result"])
 SECONDS = Histogram("photos_convert_seconds", "Time to convert one photo", buckets=(1, 2, 5, 10, 20, 40, 80))
@@ -42,6 +45,7 @@ def transcoded(fmt: str, info: dict) -> bool:
 
 def convert_one(store: Store, up: str) -> str | None:
     """Convert one finished upload; returns the photo id (or None if rejected)."""
+    attempts = store.note_attempt(up)
     data, info = store.take_upload(up)
     pid = photo_id(data)
     existing = store.meta(pid)
@@ -57,6 +61,14 @@ def convert_one(store: Store, up: str) -> str | None:
         "status": "converting",
         "upload": {k: info.get(k) for k in ("filename", "content_type", "bytes", "device", "from")},
     }
+    if attempts > MAX_ATTEMPTS:
+        m.update(status="failed", error="the converter stopped on this photo (out of memory?) and gave up after "
+                 f"{MAX_ATTEMPTS} tries")
+        store.save_meta(m)
+        store.drop_upload(up)
+        CONVERTED.labels("gave_up").inc()
+        log.error("upload given up on", photo=pid, attempts=attempts - 1)
+        return None
     store.save_meta(m)
     with brick_observe.span("photos convert", **{"photos.id": pid, "photos.bytes": len(data)}):
         try:

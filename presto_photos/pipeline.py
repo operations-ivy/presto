@@ -61,6 +61,26 @@ def srgb_to_linear(v):
     return np.where(v <= 0.04045, v / 12.92, ((v + 0.055) / 1.055) ** 2.4).astype(np.float32)
 
 
+# Every 8-bit code to linear light, worked out the same way as srgb_to_linear:
+# indexing it makes the float image in one step, with no full-size temporaries.
+_LINEAR_LUT = srgb_to_linear(np.arange(256, dtype=np.float32) / np.float32(255.0))
+
+
+def to_linear(im: Image.Image) -> np.ndarray:
+    """An RGB image to linear-light float32 HxWx3."""
+    a = np.asarray(im)
+    if a.dtype == np.uint8:
+        return _LINEAR_LUT[a]
+    return srgb_to_linear(a.astype(np.float32) / np.float32(np.iinfo(a.dtype).max))
+
+
+def _in_rows(lin: np.ndarray, fn, rows: int = 256) -> np.ndarray:
+    """Apply fn to lin in place, a block of rows at a time (small temporaries)."""
+    for i in range(0, lin.shape[0], rows):
+        lin[i : i + rows] = fn(lin[i : i + rows])
+    return lin
+
+
 def linear_to_srgb(v):
     v = np.clip(v, 0.0, 1.0)
     return np.where(v <= 0.0031308, v * 12.92, 1.055 * np.power(v, 1 / 2.4) - 0.055).astype(np.float32)
@@ -105,14 +125,12 @@ def decode(data: bytes) -> tuple[np.ndarray, Source]:
                 outputMode="RGB",
                 flags=ImageCms.Flags.BLACKPOINTCOMPENSATION,
             )
-        rgb = np.asarray(im, dtype=np.float32) / 255.0
-        lin = srgb_to_linear(rgb)
+        lin = to_linear(im)
         colour = f"{name} (ICC)"
     else:
-        rgb = np.asarray(im.convert("RGB"), dtype=np.float32) / 255.0
-        lin = srgb_to_linear(rgb)  # P3 uses the sRGB transfer curve too
+        lin = to_linear(im.convert("RGB"))  # P3 uses the sRGB transfer curve too
         if nclx.get("color_primaries") == NCLX_P3:
-            lin = np.clip(lin @ P3_TO_SRGB.T, 0.0, 1.0)
+            _in_rows(lin, lambda b: np.clip(b @ P3_TO_SRGB.T, 0.0, 1.0))
             colour = "Display P3 (NCLX)"
         else:
             colour = "sRGB (assumed)"
@@ -125,9 +143,11 @@ def auto_crop(lin: np.ndarray) -> tuple[float, float, float]:
     holding the most detail, with a pull toward the centre. A stand-in for
     subject detection: detail (edges) is where subjects usually are."""
     h, w = lin.shape[:2]
-    lum = lin @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
     k = max(1, max(h, w) // 256)  # work on a ~256 px thumbnail
-    small = lum[: h - h % k, : w - w % k].reshape(h // k, k, w // k, k).mean(axis=(1, 3))
+    weights = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    small = np.concatenate(  # luminance, k rows at a time (no full-size copy)
+        [(lin[y : y + k, : w - w % k] @ weights).reshape(1, k, w // k, k).mean(axis=(1, 3)) for y in range(0, h - h % k, k)]
+    )
     gy, gx = np.gradient(small)
     energy = np.hypot(gx, gy)
     sh, sw = small.shape
@@ -155,11 +175,19 @@ def crop_box(w: int, h: int, crop: tuple[float, float, float]) -> tuple[float, f
 
 # --- resize, sharpen, dither --------------------------------------------
 def resize_linear(lin: np.ndarray, box, out: int) -> np.ndarray:
-    """Lanczos in linear light, one float channel at a time (Pillow's F mode)."""
+    """Lanczos in linear light, one float channel at a time (Pillow's F mode).
+    Only the box (plus a margin for the filter) is copied out of the source."""
+    h, w = lin.shape[:2]
+    left, top, right, bottom = box
+    margin = 3 * max(1.0, (right - left) / out) + 2  # Lanczos-3's reach, in source pixels
+    x0, y0 = max(0, int(left - margin)), max(0, int(top - margin))
+    x1, y1 = min(w, int(right + margin) + 1), min(h, int(bottom + margin) + 1)
+    region = lin[y0:y1, x0:x1]
+    sub = (left - x0, top - y0, right - x0, bottom - y0)
     chans = []
     for c in range(3):
-        f = Image.fromarray(np.ascontiguousarray(lin[..., c]), "F")
-        chans.append(np.asarray(f.resize((out, out), Image.LANCZOS, box=box, reducing_gap=3.0)))
+        f = Image.fromarray(np.ascontiguousarray(region[..., c]), "F")
+        chans.append(np.asarray(f.resize((out, out), Image.LANCZOS, box=sub, reducing_gap=3.0)))
     return np.clip(np.stack(chans, axis=-1), 0.0, 1.0)
 
 

@@ -256,3 +256,32 @@ def test_limits(site, monkeypatch):
 )
 def test_transcoded(fmt, info, want):
     assert worker.transcoded(fmt, info) is want
+
+
+# --- memory --------------------------------------------------------------
+def test_linear_lut_matches_the_curve():
+    codes = np.arange(256, dtype=np.float32) / np.float32(255.0)
+    assert (pipeline._LINEAR_LUT == pipeline.srgb_to_linear(codes)).all()
+
+
+@pytest.mark.parametrize("crop", [(0.5, 0.5, 1.0), (0.3, 0.4, 0.5), (0.0, 1.0, 0.2), (1.0, 0.0, 0.07)])
+def test_resize_reads_only_the_crop(crop):
+    """Resizing a copy of just the crop's region gives the same pixels as the whole image."""
+    lin = np.random.default_rng(2).random((900, 1400, 3), dtype=np.float32)
+    box = pipeline.crop_box(1400, 900, crop)
+    whole = []
+    for c in range(3):
+        f = Image.fromarray(np.ascontiguousarray(lin[..., c]), "F")
+        whole.append(np.asarray(f.resize((480, 480), Image.LANCZOS, box=box, reducing_gap=3.0)))
+    assert np.abs(np.clip(np.stack(whole, -1), 0, 1) - pipeline.resize_linear(lin, box, 480)).max() < 1e-3
+
+
+def test_upload_that_kills_the_converter_is_given_up(tmp_path):
+    s = Store(tmp_path)
+    data = jpeg((800, 600))
+    up = queue(s, data)
+    for _ in range(worker.MAX_ATTEMPTS):  # each attempt died mid-conversion (OOM): counted, not finished
+        s.note_attempt(up)
+    worker.tick(s)
+    (m,) = s.photos()
+    assert m["status"] == "failed" and "gave up" in m["error"] and not s.pending_uploads()
