@@ -1,0 +1,17 @@
+# presto settings (flat key: value only; see device/lib/neon/conf.py).
+# Location is private: LATITUDE / LONGITUDE go in secrets.py on the device, never here.
+idle_seconds: 300      # no touch for this long: go to idle_screen
+idle_screen: photos
+photo_seconds: 300     # a new photo every 5 minutes
+units: imperial        # imperial (F) or metric (C)
+clock_24h: false       # false: 10:47 PM
+utc_offset: -5         # standard time, hours; the forecast's own offset wins once fetched
+dst: us                # us, eu or none
+temp_offset_c: 0.0     # the sensor stick reads warm next to the board: correct it here
+chirp: false           # soft chimes on navigation (off by default)
+chirp_volume: 0.005    # 0..1; 0.005 is a soft tick, 0 is silent
+dark_lux: 3            # below this: LEDs off, backlight at its floor
+arm_up: weather
+arm_left: photos
+arm_right: brick
+arm_down: fun

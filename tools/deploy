@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# deploy: copy device/ onto the Presto over USB, then restart it.
+#
+#   tools/deploy [PORT]        (default /dev/ttyACM0)
+#
+# Needs mpremote (pip install mpremote). Close Thonny first: only one program
+# can hold the port. Uses a plain `mpremote connect` (it soft-resets first, so
+# no app holds the screen or SD card; `resume` against a running app has
+# stalled the USB serial before). Never touches secrets.py or /examples.
+set -euo pipefail
+
+port=${1:-/dev/ttyACM0}
+here=$(cd "$(dirname "$0")/.." && pwd)
+dev="$here/device"
+mpr=${MPREMOTE:-mpremote}
+
+if command -v fuser >/dev/null && fuser "$port" >/dev/null 2>&1; then
+    echo "deploy: $port is in use (Thonny?). Disconnect it first." >&2
+    exit 1
+fi
+
+args=(exec "import os
+for p in ('/lib', '/lib/neon'):
+    try: os.mkdir(p)
+    except OSError: pass")
+while IFS= read -r f; do
+    rel=${f#"$dev"/}
+    args+=(+ cp "$f" ":/$rel")
+done < <(find "$dev" -type f \( -name '*.py' -o -name '*.yaml' \) | sort)
+
+"$mpr" connect "$port" "${args[@]}"
+echo "deploy: copied; restarting"
+"$mpr" connect "$port" exec "import machine; machine.reset()" >/dev/null 2>&1 || true

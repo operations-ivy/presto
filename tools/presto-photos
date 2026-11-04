@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# presto-photos: turn photos (iPhone HEIC/JPEG/PNG) into JPEGs the Presto's
+# Photo Frame (Pimoroni image_gallery.py) can show from /sd/gallery.
+#
+#   presto-photos [-f] OUT_DIR PHOTO...
+#
+# Each photo becomes OUT_DIR/<n>.jpg, numbered in the order given (the gallery
+# plays numbered names in order). Numbering continues after the highest
+# number already in OUT_DIR, so you can add more later.
+#   - rotated upright (EXIF / HEIC orientation), then the tag removed
+#   - converted to sRGB from its embedded profile (iPhone: Display P3)
+#   - 480x480: centre-cropped by default, or -f to fit whole on black
+#   - baseline (not progressive) JPEG, 4:2:0, quality 85, metadata stripped
+#     (no GPS location left in the file)
+set -euo pipefail
+
+fit=0
+if [[ ${1:-} == -f ]]; then fit=1; shift; fi
+if (( $# < 2 )); then
+    echo "usage: presto-photos [-f] OUT_DIR PHOTO..." >&2; exit 2
+fi
+out=$1; shift
+mkdir -p "$out"
+
+srgb=""
+for p in /usr/share/color/icc/colord/sRGB.icc /usr/share/color/icc/ghostscript/srgb.icc; do
+    [[ -f $p ]] && { srgb=$p; break; }
+done
+[[ -n $srgb ]] || { echo "no sRGB ICC profile found (install colord-data)" >&2; exit 1; }
+
+n=0
+shopt -s nullglob
+for f in "$out"/*.jpg; do
+    b=${f##*/}; b=${b%.jpg}
+    [[ $b =~ ^[0-9]+$ ]] && (( 10#$b > n )) && n=$((10#$b))
+done
+
+if (( fit )); then
+    geom=(-resize 480x480 -background black -gravity center -extent 480x480)
+else
+    geom=(-resize '480x480^' -gravity center -extent 480x480)
+fi
+
+for src in "$@"; do
+    n=$((n + 1))
+    dst="$out/$n.jpg"
+    # -auto-orient first, then the colour conversion (only meaningful when the
+    # photo carries a profile; untagged photos are treated as sRGB already).
+    prof=()
+    if [[ -n $(magick identify -format '%[profile:icc]' "$src[0]" 2>/dev/null) ]]; then
+        prof=(-profile "$srgb")
+    fi
+    magick "$src[0]" -auto-orient "${prof[@]}" -colorspace sRGB "${geom[@]}" \
+        -strip -interlace none -sampling-factor 4:2:0 -quality 85 "$dst"
+    echo "$src -> $dst"
+done
