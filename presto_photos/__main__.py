@@ -1,0 +1,41 @@
+"""presto-photos: `python -m presto_photos web|convert`.
+
+    PHOTOS_ROOT        the store (default /data)
+    PHOTOS_LIMIT_GB    the store's size cap (default 5)
+    PORT               web: the page; convert: /metrics and /health (default 8080)
+"""
+
+import os
+import sys
+
+import brick_observe
+
+
+def main(argv=None) -> None:
+    argv = sys.argv[1:] if argv is None else argv
+    mode = argv[0] if argv else ""
+    if mode not in ("web", "convert"):
+        sys.exit("usage: python -m presto_photos web|convert")
+    brick_observe.init(f"presto-photos-{mode}")
+    from .store import Store
+
+    store = Store(os.environ.get("PHOTOS_ROOT", "/data"), int(float(os.environ.get("PHOTOS_LIMIT_GB", "5")) * (1 << 30)))
+    port = int(os.environ.get("PORT", "8080"))
+    if mode == "web":
+        from . import web
+
+        web.serve(store, port)
+    else:
+        from brick_observe import metrics
+
+        from . import worker
+
+        # The converter serves only metrics (prometheus-client answers every
+        # path, so the kubelet's /health probe works too). Nothing else reaches
+        # it: NetworkPolicy.
+        metrics.serve(port)
+        worker.run(store)
+
+
+if __name__ == "__main__":
+    main()

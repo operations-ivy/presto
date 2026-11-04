@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#07050f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Presto">
+<title>Presto Uplink</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+:root{
+  --night:#07050f; --panel:#0e0a1e; --panel-2:#120d24; --line:#241a44; --line-bright:#3a2a6e;
+  --text:#e7e3ff; --dim:#a39dd0; --faint:#6f68a0;
+  --magenta:#ff2a6d; --cyan:#05d9e8; --amber:#f9c80e; --sodium:#ff9f1c; --violet:#9d4edd;
+  --phosphor:#39ff88; --red:#ff3860;
+  --pixel:'Silkscreen', 'Courier New', monospace;
+  --ui:'Rajdhani', 'Segoe UI', sans-serif;
+  --mono:'Share Tech Mono', 'Courier New', monospace;
+  --gutter:16px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--night);color:var(--text);font-family:var(--ui);font-size:17px;-webkit-tap-highlight-color:transparent}
+/* the page ends with the last row of photos down among the rooftops (the skyline is 150 px; the
+   short buildings are ~40-70 px, so photos peek out between the towers) */
+body{min-height:100vh;overflow-x:hidden;padding-bottom:96px}
+/* scanlines over everything, like the Presto's CRT moments */
+body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:50;
+  background:repeating-linear-gradient(to bottom, rgba(255,255,255,.025) 0 1px, transparent 1px 3px);mix-blend-mode:overlay}
+#rain{position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.55}
+main{position:relative;z-index:2;max-width:760px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 18px) var(--gutter) 0}
+
+/* the neon title */
+header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:18px}
+h1{font-family:var(--pixel);font-weight:700;font-size:clamp(26px,8vw,40px);margin:0;letter-spacing:2px;line-height:1;
+  color:var(--cyan);text-shadow:0 0 4px rgba(5,217,232,.9),0 0 14px rgba(5,217,232,.55),0 0 28px rgba(5,217,232,.3);
+  animation:strike 1.2s steps(1) 1, hum 7s infinite}
+h1 small{display:block;font-size:.42em;color:var(--magenta);letter-spacing:3px;margin-top:6px;
+  text-shadow:0 0 6px rgba(255,42,109,.7)}
+h1.glitch{animation:glitch .35s steps(2) 1}
+@keyframes strike{0%{opacity:0}10%{opacity:1}18%{opacity:.1}26%{opacity:1}40%{opacity:.3}55%,100%{opacity:1}}
+@keyframes hum{0%,96%,100%{opacity:1}97%{opacity:.75}98%{opacity:1}99%{opacity:.85}}
+@keyframes glitch{0%{text-shadow:-4px 0 var(--magenta),4px 0 var(--cyan);transform:translate(2px,0)}
+  50%{text-shadow:3px 0 var(--magenta),-3px 0 var(--cyan);transform:translate(-2px,1px)}
+  100%{text-shadow:0 0 4px rgba(5,217,232,.9),0 0 14px rgba(5,217,232,.55);transform:none}}
+.status{font-family:var(--mono);font-size:13px;color:var(--dim);text-align:right;line-height:1.4;white-space:nowrap}
+.status b{color:var(--phosphor);font-weight:400}
+
+/* the big button */
+.add{display:flex;align-items:center;justify-content:center;gap:12px;width:100%;min-height:72px;margin:6px 0 10px;
+  font-family:var(--pixel);font-size:20px;letter-spacing:2px;color:var(--text);background:var(--panel);
+  border:2px solid var(--magenta);border-radius:4px;cursor:pointer;
+  box-shadow:0 0 0 1px rgba(255,42,109,.25),0 0 18px rgba(255,42,109,.35),inset 0 0 18px rgba(255,42,109,.12)}
+.add:active{transform:translateY(1px);box-shadow:0 0 0 1px rgba(255,42,109,.4),0 0 28px rgba(255,42,109,.55),inset 0 0 22px rgba(255,42,109,.2)}
+.add .plus{color:var(--magenta);font-size:28px;text-shadow:0 0 8px var(--magenta)}
+.hint{font-family:var(--mono);font-size:13px;color:var(--faint);margin:0 0 18px}
+
+/* the upload queue */
+.queue{display:grid;gap:8px;margin-bottom:22px}
+.q{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:10px 12px;font-family:var(--mono);font-size:14px}
+.q .row{display:flex;justify-content:space-between;gap:10px}
+.q .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.q .st{color:var(--dim);flex:none}
+.q.err .st{color:var(--red)} .q.done .st{color:var(--phosphor)}
+.bar{height:4px;background:var(--line);margin-top:8px;border-radius:2px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--magenta),var(--cyan));box-shadow:0 0 10px var(--cyan);transition:width .2s}
+
+h2{font-family:var(--pixel);font-weight:400;font-size:15px;letter-spacing:3px;color:var(--amber);margin:6px 0 12px;
+  text-shadow:0 0 8px rgba(249,200,14,.45)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.card{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:4px;overflow:hidden;cursor:pointer;
+  padding:0;color:inherit;font:inherit;text-align:left}
+.card:focus-visible,.add:focus-visible,button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.card img{display:block;width:100%;aspect-ratio:1;object-fit:cover;background:var(--panel-2)}
+.card .wait{aspect-ratio:1;display:grid;place-items:center;font-family:var(--pixel);font-size:12px;letter-spacing:2px;color:var(--dim);
+  background:repeating-linear-gradient(0deg,var(--panel-2) 0 3px,var(--panel) 3px 6px);animation:noise .25s steps(2) infinite}
+@keyframes noise{50%{background-position:0 3px}}
+.card .meta{padding:7px 9px;font-family:var(--mono);font-size:12px;color:var(--dim);display:flex;justify-content:space-between;gap:6px}
+.chip{font-family:var(--pixel);font-size:10px;letter-spacing:1px;padding:1px 5px;border:1px solid currentColor;border-radius:2px}
+.chip.ready{color:var(--phosphor)} .chip.converting,.chip.recrop,.chip.queued{color:var(--amber)} .chip.failed{color:var(--red)} .chip.hidden{color:var(--faint)}
+.empty{font-family:var(--mono);color:var(--faint);padding:28px 0;text-align:center;border:1px dashed var(--line);border-radius:4px}
+
+/* the photo sheet */
+dialog{border:0;padding:0;background:transparent;color:inherit;max-width:min(760px,100vw);width:100%;max-height:100vh}
+dialog::backdrop{background:rgba(3,2,8,.82)}
+.sheet{position:relative;background:var(--panel);border:1px solid var(--line-bright);border-radius:6px;margin:calc(env(safe-area-inset-top) + 10px) var(--gutter);
+  padding:14px;box-shadow:0 0 30px rgba(157,78,221,.25)}
+.sheet .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.sheet h3{margin:0;font-family:var(--pixel);font-weight:400;font-size:14px;letter-spacing:2px;color:var(--cyan)}
+.x{background:none;border:1px solid var(--line-bright);color:var(--text);font-family:var(--pixel);font-size:14px;width:40px;height:40px;border-radius:4px;cursor:pointer}
+.frame{position:relative;width:min(100%,480px);margin:0 auto;aspect-ratio:1;background:#000;border:2px solid #000;border-radius:3px;
+  box-shadow:0 0 0 2px var(--line-bright),0 0 22px rgba(5,217,232,.18)}
+.frame img{display:block;width:100%;height:100%}
+.frame .label{position:absolute;left:6px;top:6px;font-family:var(--pixel);font-size:10px;color:var(--phosphor);background:rgba(0,0,0,.6);padding:1px 4px}
+.facts{font-family:var(--mono);font-size:13px;color:var(--dim);margin:12px 0;line-height:1.55}
+.facts .warn{color:var(--sodium)}
+.facts .bad{color:var(--red)}
+.crop{margin-top:6px}
+.crop .hd{font-family:var(--pixel);font-size:12px;letter-spacing:2px;color:var(--amber);margin:12px 0 8px}
+.cropbox{position:relative;touch-action:none;user-select:none;background:#000;border-radius:3px;overflow:hidden}
+.cropbox img{display:block;width:100%;pointer-events:none;opacity:.55}
+.cropbox .sq{position:absolute;border:2px solid var(--cyan);box-shadow:0 0 0 9999px rgba(0,0,0,.45),0 0 14px var(--cyan);cursor:grab}
+.cropbox .sq::after{content:"";position:absolute;inset:0;background:
+  linear-gradient(var(--cyan),var(--cyan)) center/1px 100% no-repeat,linear-gradient(var(--cyan),var(--cyan)) center/100% 1px no-repeat;opacity:.25}
+input[type=range]{width:100%;accent-color:var(--cyan);margin:12px 0 4px}
+.btns{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+.btn{flex:1 1 140px;min-height:48px;font-family:var(--pixel);font-size:13px;letter-spacing:1px;color:var(--text);background:var(--panel-2);
+  border:1px solid var(--line-bright);border-radius:4px;cursor:pointer}
+.btn.go{border-color:var(--cyan);box-shadow:0 0 12px rgba(5,217,232,.3)}
+.btn.danger{border-color:var(--red);color:#ffd3dc}
+.btn:disabled{opacity:.45}
+#static{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;border-radius:6px;display:none}
+
+/* the skyline, pinned to the bottom like Home's, in front: photos scroll behind the buildings */
+#city{position:fixed;left:0;right:0;bottom:0;height:150px;z-index:3;pointer-events:none;
+  filter:drop-shadow(0 -6px 10px rgba(7,5,15,.85))}
+#street{position:fixed;left:0;right:0;bottom:0;height:env(safe-area-inset-bottom);background:#0a0814;z-index:3}
+@media (prefers-reduced-motion:reduce){h1,h1.glitch,.card .wait{animation:none}#rain{display:none}}
+</style>
+</head>
+<body>
+<canvas id="rain" aria-hidden="true"></canvas>
+<main>
+  <header>
+    <h1 id="title">PRESTO<small>// UPLINK</small></h1>
+    <div class="status" id="status">STORE <b>--</b><br>QUEUE <b>0</b></div>
+  </header>
+
+  <button class="add" id="add" type="button"><span class="plus">+</span> ADD PHOTOS</button>
+  <input id="file" type="file" multiple accept="image/heic,image/heif,image/jpeg,image/png" hidden>
+  <p class="hint">HEIC straight from the iPhone keeps the most detail. Each photo becomes a 480&times;480 frame, dithered for the Presto's screen.</p>
+
+  <div class="queue" id="queue"></div>
+
+  <h2>ON THE FRAME</h2>
+  <div class="grid" id="grid"></div>
+</main>
+
+<svg id="city" viewBox="0 0 480 150" preserveAspectRatio="xMidYMax slice" aria-hidden="true"></svg>
+<div id="street" aria-hidden="true"></div>
+
+<dialog id="sheet" aria-labelledby="sheet-title">
+  <div class="sheet">
+    <canvas id="static"></canvas>
+    <div class="top"><h3 id="sheet-title">PHOTO</h3><button class="x" id="close" type="button" aria-label="Close">X</button></div>
+    <div class="frame"><img id="pv" alt="What the Presto shows"><span class="label">AS THE PRESTO SHOWS IT</span></div>
+    <div class="facts" id="facts"></div>
+    <div class="crop" id="crop">
+      <div class="hd">CROP</div>
+      <div class="cropbox" id="cropbox"><img id="master" alt="The whole photo"><div class="sq" id="sq"></div></div>
+      <input type="range" id="zoom" min="20" max="100" value="100" aria-label="Crop size">
+    </div>
+    <div class="btns">
+      <button class="btn go" id="apply" type="button">APPLY CROP</button>
+      <button class="btn" id="hide" type="button">HIDE</button>
+      <button class="btn danger" id="del" type="button">DELETE</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const H = {"X-Presto": "1"};
+let photos = [], open = null, crop = null;
+
+// ---- the neon title glitches now and then (like Home's clock) ----
+function glitchSoon(){ setTimeout(() => { const t = $("title"); t.classList.remove("glitch"); void t.offsetWidth; t.classList.add("glitch"); glitchSoon(); }, 18000 + Math.random() * 14000); }
+glitchSoon();
+$("title").addEventListener("click", () => { const t = $("title"); t.classList.remove("glitch"); void t.offsetWidth; t.classList.add("glitch"); });
+
+// ---- rain ----
+(function rain(){
+  const c = $("rain"), g = c.getContext("2d");
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  let drops = [];
+  function size(){ c.width = innerWidth; c.height = innerHeight; drops = Array.from({length: Math.round(innerWidth / 9)}, () => [Math.random() * innerWidth, Math.random() * innerHeight, 7 + Math.random() * 9]); }
+  size(); addEventListener("resize", size);
+  (function frame(){
+    g.clearRect(0, 0, c.width, c.height);
+    for (const d of drops){
+      d[1] += d[2]; d[0] -= d[2] / 5;
+      if (d[1] > c.height){ d[1] = -20; d[0] = Math.random() * (c.width + 60); }
+      g.strokeStyle = d[2] > 13 ? "rgba(90,130,170,.55)" : "rgba(40,60,90,.55)";
+      g.beginPath(); g.moveTo(d[0], d[1]); g.lineTo(d[0] - d[2] / 5, d[1] + d[2] / 2 + 3); g.stroke();
+    }
+    requestAnimationFrame(frame);
+  })();
+})();
+
+// ---- the skyline: Home's, in SVG ----
+(function city(){
+  const svg = $("city"), ns = "http://www.w3.org/2000/svg";
+  let seed = 1982; const r = (a, b) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return a + seed % (b - a + 1); };
+  const el = (n, a) => { const e = document.createElementNS(ns, n); for (const k in a) e.setAttribute(k, a[k]); svg.appendChild(e); return e; };
+  const wins = []; let x = -10, tallest = null;
+  while (x < 480){
+    const w = r(28, 70), h = r(40, 125), top = 150 - h;
+    el("rect", {x, y: top, width: w, height: h, fill: "#0a0814"});
+    el("rect", {x, y: top, width: w, height: 2, fill: "#181230"});
+    if (!tallest || h > tallest.h) tallest = {x, w, h, top};
+    for (let wy = top + 6; wy < 144; wy += 9) for (let wx = x + 4; wx < x + w - 5; wx += 7)
+      if (r(0, 9) < 4) wins.push(el("rect", {x: wx, y: wy, width: 3, height: 4, fill: ["#ff9f1c", "#f9c80e", "#05d9e8"][r(0, 2)], opacity: r(0, 9) < 6 ? 1 : 0}));
+    x += w + r(0, 6);
+  }
+  const sign = el("text", {x: tallest.x + tallest.w / 2, y: tallest.top + 16, fill: "#ff2a6d", "font-family": "Silkscreen, monospace", "font-size": 11,
+    "text-anchor": "middle", style: "writing-mode:vertical-rl;letter-spacing:2px;filter:drop-shadow(0 0 3px #ff2a6d)"});
+  sign.textContent = "UPLINK";
+  setInterval(() => { for (let i = 0; i < 3; i++){ const w = wins[r(0, wins.length - 1)]; w.setAttribute("opacity", w.getAttribute("opacity") === "1" ? 0 : 1); } }, 700);
+  setInterval(() => { sign.setAttribute("opacity", Math.random() < .08 ? .15 : 1); }, 180);
+})();
+
+// ---- TV static: the Presto's switch, when a photo opens ----
+function staticBurst(){
+  const c = $("static"), g = c.getContext("2d"), box = c.parentElement.getBoundingClientRect();
+  c.width = box.width; c.height = box.height; c.style.display = "block";
+  const cols = ["#241a44", "#6f68a0", "#0e0a1e", "#9d4edd"], frames = [1, .8, .55, .35, .18, .07]; let i = 0;
+  (function f(){
+    g.clearRect(0, 0, c.width, c.height);
+    const cover = frames[i];
+    if (cover >= 1){ g.fillStyle = "#07050f"; g.fillRect(0, 0, c.width, c.height); }
+    for (let n = 0; n < 160 * cover; n++){ g.fillStyle = cols[n % 4]; g.fillRect(Math.random() * c.width - 60, Math.random() * c.height, 30 + Math.random() * 250, 1 + Math.random() * 3); }
+    if (Math.random() < .6){ g.fillStyle = "#e7e3ff"; g.fillRect(0, Math.random() * c.height, c.width, 1); }
+    if (++i < frames.length) setTimeout(f, 70); else { g.clearRect(0, 0, c.width, c.height); c.style.display = "none"; }
+  })();
+}
+
+// ---- uploads ----
+$("add").onclick = () => $("file").click();
+$("file").onchange = () => { for (const f of $("file").files) upload(f); $("file").value = ""; };
+
+function upload(f){
+  const q = document.createElement("div"); q.className = "q";
+  q.innerHTML = '<div class="row"><span class="name"></span><span class="st">SENDING</span></div><div class="bar"><i></i></div>';
+  q.querySelector(".name").textContent = f.name + "  (" + (f.size / 1048576).toFixed(1) + " MB, " + (f.type || "?") + ")";
+  $("queue").prepend(q);
+  const x = new XMLHttpRequest();
+  x.open("POST", "/api/upload");
+  x.setRequestHeader("X-Presto", "1");
+  x.setRequestHeader("X-Filename", f.name);
+  x.setRequestHeader("Content-Type", f.type || "application/octet-stream");
+  x.upload.onprogress = (e) => { if (e.lengthComputable) q.querySelector("i").style.width = (100 * e.loaded / e.total) + "%"; };
+  x.onload = () => {
+    let msg = "QUEUED"; try { msg = x.status === 202 ? "CONVERTING" : (JSON.parse(x.responseText).error || x.status).toString().toUpperCase(); } catch (e) {}
+    q.querySelector(".st").textContent = msg; q.classList.add(x.status === 202 ? "done" : "err");
+    if (x.status === 202) setTimeout(() => q.remove(), 6000);
+    refresh();
+  };
+  x.onerror = () => { q.querySelector(".st").textContent = "NO SIGNAL"; q.classList.add("err"); };
+  x.send(f);
+}
+
+// ---- the library ----
+function fmtMB(b){ return (b / 1073741824 >= 1 ? (b / 1073741824).toFixed(2) + " GB" : (b / 1048576).toFixed(0) + " MB"); }
+async function refresh(){
+  let d;
+  try { d = await (await fetch("/api/photos", {cache: "no-store"})).json(); } catch (e) { $("status").innerHTML = "STORE <b>OFFLINE</b>"; return; }
+  photos = d.photos;
+  $("status").innerHTML = "STORE <b>" + fmtMB(d.usage) + "</b> / " + fmtMB(d.limit) + "<br>QUEUE <b>" + d.pending + "</b>";
+  const grid = $("grid"); grid.innerHTML = "";
+  if (!photos.length){ grid.innerHTML = '<div class="empty" style="grid-column:1/-1">NO PHOTOS YET. ADD SOME.</div>'; }
+  for (const p of photos){
+    const b = document.createElement("button"); b.type = "button"; b.className = "card";
+    const st = p.hidden ? "hidden" : p.status;
+    if (p.status === "ready" || (p.status === "recrop")) {
+      const img = document.createElement("img"); img.alt = ""; img.loading = "lazy";
+      img.src = "/preview?id=" + p.id + "&v=" + (p.recropped || p.converted || 0); b.appendChild(img);
+    } else {
+      const w = document.createElement("div"); w.className = "wait"; w.textContent = p.status === "failed" ? "NO SIGNAL" : "TUNING IN"; b.appendChild(w);
+    }
+    const m = document.createElement("div"); m.className = "meta";
+    m.innerHTML = '<span class="chip ' + st + '">' + st.toUpperCase() + '</span><span></span>';
+    m.lastChild.textContent = p.source ? (p.source.format === "MPO" ? "JPEG" : p.source.format) : (p.upload && p.upload.filename || "");
+    b.appendChild(m);
+    b.onclick = () => show(p.id);
+    grid.appendChild(b);
+  }
+  if (open){ const p = photos.find((x) => x.id === open); if (p) facts(p); }
+  const busy = d.pending || photos.some((p) => p.status === "converting" || p.status === "recrop");
+  clearTimeout(refresh.t); refresh.t = setTimeout(refresh, busy ? 2000 : 15000);
+}
+
+// ---- one photo ----
+function facts(p){
+  const s = p.source || {}, u = p.upload || {};
+  let h = "";
+  if (s.format) h += (s.format === "MPO" ? "JPEG (+HDR gain map)" : s.format) + " " + s.width + "&times;" + s.height + " &middot; " + esc(s.colour) + " &middot; " + s.bit_depth + "-bit<br>";
+  if (u.filename) h += esc(u.filename) + " &middot; " + ((u.bytes || 0) / 1048576).toFixed(1) + " MB &middot; from " + esc(u.device || "?") + "<br>";
+  if (p.downgraded) h += '<span class="warn">Safari sent this as JPEG, not the original HEIC (it converts on upload). Full resolution and colour came through, so at 480 px it looks the same.</span><br>';
+  if (p.status === "failed") h += '<span class="bad">' + esc(p.error || "failed") + "</span><br>";
+  if (p.hidden) h += "Hidden: kept here, not on the frame.<br>";
+  h += p.crop_auto === false ? "Crop: yours." : "Crop: chosen automatically (the most detail).";
+  $("facts").innerHTML = h;
+  $("hide").textContent = p.hidden ? "SHOW ON FRAME" : "HIDE";
+  $("apply").disabled = !(p.status === "ready");
+}
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c])); }
+
+function show(id){
+  const p = photos.find((x) => x.id === id); if (!p) return;
+  open = id;
+  $("sheet-title").textContent = "PHOTO " + id.slice(0, 6).toUpperCase();
+  $("pv").src = p.status === "ready" || p.status === "recrop" ? "/preview?id=" + id + "&v=" + (p.recropped || p.converted || 0) : "";
+  facts(p);
+  $("crop").style.display = p.status === "ready" ? "" : "none";
+  $("sheet").showModal(); staticBurst();
+  if (p.status === "ready"){
+    crop = (p.crop || [.5, .5, 1]).slice();
+    const m = $("master"); m.onload = placeSquare; m.src = "/master?id=" + id;
+    $("zoom").value = Math.round(crop[2] * 100);
+  }
+}
+$("close").onclick = () => { $("sheet").close(); };
+$("sheet").addEventListener("close", () => { open = null; });
+
+function placeSquare(){
+  const m = $("master"), box = $("cropbox").getBoundingClientRect();
+  const W = box.width, Hh = m.getBoundingClientRect().height, short = Math.min(W, Hh);
+  const side = short * crop[2];
+  let left = crop[0] * W - side / 2, top = crop[1] * Hh - side / 2;
+  left = Math.min(Math.max(0, left), W - side); top = Math.min(Math.max(0, top), Hh - side);
+  crop[0] = (left + side / 2) / W; crop[1] = (top + side / 2) / Hh;
+  const sq = $("sq"); sq.style.left = left + "px"; sq.style.top = top + "px"; sq.style.width = side + "px"; sq.style.height = side + "px";
+}
+$("zoom").oninput = () => { crop[2] = $("zoom").value / 100; placeSquare(); };
+(function drag(){
+  const box = $("cropbox"); let start = null;
+  box.addEventListener("pointerdown", (e) => { box.setPointerCapture(e.pointerId); start = [e.clientX, e.clientY, crop[0], crop[1]]; });
+  box.addEventListener("pointermove", (e) => {
+    if (!start) return;
+    const b = box.getBoundingClientRect(), mh = $("master").getBoundingClientRect().height;
+    crop[0] = start[2] + (e.clientX - start[0]) / b.width; crop[1] = start[3] + (e.clientY - start[1]) / mh; placeSquare();
+  });
+  const end = () => { start = null; }; box.addEventListener("pointerup", end); box.addEventListener("pointercancel", end);
+})();
+addEventListener("resize", () => { if (open && crop) placeSquare(); });
+
+async function post(path, body){
+  const r = await fetch(path, {method: "POST", headers: Object.assign({"Content-Type": "application/json"}, H), body: JSON.stringify(body || {})});
+  if (!r.ok){ let e = r.status; try { e = (await r.json()).error; } catch (x) {} alert(e); }
+  return r.ok;
+}
+$("apply").onclick = async () => { if (await post("/api/crop?id=" + open, {crop})){ $("facts").innerHTML += "<br>Re-rendering with your crop..."; refresh(); } };
+$("hide").onclick = async () => { const p = photos.find((x) => x.id === open); if (await post("/api/hide?id=" + open, {hidden: !p.hidden})) refresh(); };
+$("del").onclick = async () => { if (confirm("Delete this photo from the Presto?") && await post("/api/delete?id=" + open)){ $("sheet").close(); refresh(); } };
+
+refresh();
+</script>
+</body>
+</html>
