@@ -16,6 +16,8 @@ DEFAULTS = {
     "chirp": False,
     "chirp_volume": 0.005,  # 0..1 of the piezo's duty: 0.005 is a soft tick
     "dark_lux": 3,  # below this: LEDs off, backlight at its floor
+    "photo_feed": "https://presto.brick.nozdormu.cloud",  # the upload page; empty: /sd/gallery only
+    "feed_minutes": 10,  # how often to look for new photos
     "arm_up": "weather",
     "arm_left": "photos",
     "arm_right": "brick",
@@ -48,6 +50,10 @@ def run(presto, secrets):
     ctx.room = services.Room(ctx.fahrenheit, s["temp_offset_c"])
     chirp = services.Chirp(s["chirp"], s["chirp_volume"])
     _mount_sd()
+    from neon import photosync
+
+    ctx.feed = photosync.Feed(s["photo_feed"], s["feed_minutes"] * 60)
+    ctx.last_touch = time.ticks_ms()
 
     apps = {c.name: c(ctx) for c in (screens.Weather, screens.Photos, screens.Brick, screens.Fun)}
     ctx.arms = {"up": s["arm_up"], "left": s["arm_left"], "right": s["arm_right"], "down": s["arm_down"]}
@@ -68,6 +74,7 @@ def run(presto, secrets):
 
     def switch(name):
         nonlocal cur
+        t0 = time.ticks_ms()
         plus.go(name)
         cur.exit()
         cur = screens_by_name[name]
@@ -81,6 +88,7 @@ def run(presto, secrets):
         presto.update()
         cur.dirty = False
         cur.leds(presto, time.ticks_ms())
+        services.log("to %s in %d ms" % (name, time.ticks_diff(time.ticks_ms(), t0)))
 
     def draw(now_ms):
         cur.draw(d, now_ms)
@@ -103,7 +111,7 @@ def run(presto, secrets):
                 down[3], down[4] = touch.x, touch.y
             if touch.state2:
                 down[5] = True
-            last_touch = now
+            last_touch = ctx.last_touch = now
         elif down is not None:
             g = nav.classify(down[3] - down[0], down[4] - down[1], time.ticks_diff(now, down[2]), down[5])
             x0, y0 = down[0], down[1]
@@ -143,6 +151,7 @@ def run(presto, secrets):
             ctx.weather.fetch(ctx.clock)
             cur.dirty = True
         ctx.room.read()
+        ctx.feed.step(ctx.net, last_touch)
         if time.ticks_diff(now, last_light) > 1000:
             last_light = now
             _light(ctx, presto, cur, now)

@@ -211,7 +211,7 @@ def test_upload_to_presto_files(site):
     (p,) = lib["photos"]
     assert p["id"] == pid and p["upload"]["device"] == "iPhone" and p["downgraded"] is True
     man = json.loads(req(host, "/manifest.json")[1])
-    assert man["photos"][0]["rgb565"] == f"/photo/{pid}.rgb565"
+    assert man["photos"][0]["rgb565"].startswith(f"/photo/{pid}.rgb565?v=")
     code, frame, h = req(host, f"/photo/{pid}.rgb565")
     assert code == 200 and len(frame) == 460800 and "immutable" in h["Cache-Control"]
     assert req(host, f"/preview?id={pid}")[2]["Content-Type"] == "image/png"
@@ -285,3 +285,36 @@ def test_upload_that_kills_the_converter_is_given_up(tmp_path):
     worker.tick(s)
     (m,) = s.photos()
     assert m["status"] == "failed" and "gave up" in m["error"] and not s.pending_uploads()
+
+
+# --- the Presto's sync ---------------------------------------------------
+def test_manifest_rev_changes_on_recrop(tmp_path):
+    s = Store(tmp_path)
+    data = jpeg((1200, 600))
+    queue(s, data)
+    worker.tick(s)
+    (p,) = s.write_manifest()["photos"]
+    assert p["rgb565"] == f"/photo/{p['id']}.rgb565?v={p['rev']}"
+    m = s.meta(p["id"])
+    m.update(crop=[0.2, 0.5, 0.6], status="recrop", converted=p["rev"] - 5)
+    s.save_meta(m)
+    time.sleep(1.1)  # revs are whole seconds
+    worker.tick(s)
+    (q,) = s.write_manifest()["photos"]
+    assert q["rev"] > p["rev"] and q["rgb565"] != p["rgb565"]
+
+
+def test_presto_reports_what_it_shows(site):
+    s, host = site
+    data = jpeg((700, 700))
+    req(host, "/api/upload", data=data, headers=page_headers(host))
+    worker.tick(s)
+    pid = photo_id(data)
+    assert json.loads(req(host, "/api/photos")[1])["showing"] is None
+    assert req(host, f"/api/showing?id={pid}", data=b"{}")[0] == 403  # only with the page's headers
+    assert req(host, f"/api/showing?id={pid}", data=b"{}", headers=page_headers(host))[0] == 200
+    assert json.loads(req(host, "/api/photos")[1])["showing"] == pid
+    assert req(host, f"/api/showing?id={'0' * 16}", data=b"{}", headers=page_headers(host))[0] == 404
+    m = json.loads(req(host, "/manifest.json")[1])["photos"][0]
+    code, frame, _ = req(host, m["rgb565"])  # the ?v= URL serves the frame
+    assert code == 200 and len(frame) == 460800

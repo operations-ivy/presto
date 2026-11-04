@@ -105,27 +105,42 @@ class Weather(Screen):
 
 
 class Photos(Screen):
-    """Full-res JPEGs from /sd/gallery. Tap right half: next; left half: previous."""
+    """The upload page's photos (raw RGB565 frames synced to /sd/feed), else the JPEGs
+    in /sd/gallery. Tap right half: next; left half: previous."""
 
     name, label = "photos", "PHOTOS"
     frame_ms = None
     led_hue = None
+    REPORT_AFTER_MS = 20000  # tell the page once a photo has stayed up this long
 
     def __init__(self, ctx):
         super().__init__(ctx)
         import jpegdec
 
         self.jpeg = jpegdec.JPEG(ctx.display)
-        self.files = []
+        self.files = []  # (kind, path, name)
         self.i = 0
         self.shown_at = 0
+        self.seen = -1  # the feed's version this list was made from
+        self.reported = None
+        self.frame = bytearray(480 * 480 * 2)  # the photo on screen (PSRAM has room)
+        self.held = None
         self.rescan()
 
     def rescan(self):
-        try:
-            self.files = sorted(f for f in os.listdir("/sd/gallery") if f.lower().endswith((".jpg", ".jpeg")))
-        except OSError:
-            self.files = []
+        feed = self.ctx.feed
+        cur = self.files[self.i][2] if self.files else None
+        self.seen = feed.version
+        if feed.order:
+            self.files = [("raw", feed.path(n), n) for n in feed.order]
+        else:
+            try:
+                names = sorted(f for f in os.listdir("/sd/gallery") if f.lower().endswith((".jpg", ".jpeg")))
+            except OSError:
+                names = []
+            self.files = [("jpeg", "/sd/gallery/" + n, n) for n in names]
+        names = [f[2] for f in self.files]
+        self.i = names.index(cur) if cur in names else 0  # stay on the same photo if it's still there
 
     def tap(self, x, y):
         if self.files:
@@ -133,28 +148,62 @@ class Photos(Screen):
             self.dirty = True
 
     def tick(self, now_ms):
+        feed = self.ctx.feed
+        if feed.version != self.seen:
+            before = self.files[self.i][2] if self.files else None
+            self.rescan()
+            if (self.files[self.i][2] if self.files else None) != before or len(self.files) == 1:
+                self.dirty = True
         if self.files and time.ticks_diff(now_ms, self.shown_at) > self.ctx.settings["photo_seconds"] * 1000:
             self.i = (self.i + 1) % len(self.files)
             self.dirty = True
+        if (
+            self.files
+            and self.files[self.i][0] == "raw"
+            and self.reported != self.files[self.i][2]
+            and time.ticks_diff(now_ms, self.shown_at) > self.REPORT_AFTER_MS
+            and time.ticks_diff(now_ms, self.ctx.last_touch) > self.REPORT_AFTER_MS
+            and self.ctx.net.up
+        ):
+            self.reported = self.files[self.i][2]
+            feed.report(self.reported)
 
     def draw(self, d, now_ms):
         p = self.ctx.pens
-        d.set_pen(p.night)
-        d.clear()
-        if not self.files:
-            fx.centered(d, "NO PHOTOS", 200, 4, p.dim)
-            fx.centered(d, "put JPEGs in /sd/gallery", 250, 2, p.faint)
-            return
-        try:
-            self.jpeg.open_file("/sd/gallery/" + self.files[self.i])
-            w, h = self.jpeg.get_width(), self.jpeg.get_height()
-            import jpegdec
-
-            self.jpeg.decode(max(0, (W - w) // 2), max(0, (H - h) // 2), jpegdec.JPEG_SCALE_FULL, dither=True)
-        except Exception as e:
-            fx.centered(d, "CAN'T SHOW " + self.files[self.i], 200, 2, p.red)
-            fx.centered(d, repr(e)[:40], 230, 2, p.faint)
         self.shown_at = now_ms
+        if not self.files:
+            d.set_pen(p.night)
+            d.clear()
+            fx.centered(d, "NO PHOTOS", 200, 4, p.dim)
+            fx.centered(d, "add some on the upload page", 250, 2, p.faint)
+            return
+        kind, path, name = self.files[self.i]
+        try:
+            if kind == "raw":  # the frame as the screen holds it: no decoding
+                if self.held != path:  # read from the card once per photo (it's ~0.5 s);
+                    with open(path, "rb") as f:  # every redraw after that (transitions,
+                        f.readinto(self.frame)  # the HOME tab) is a memory copy
+                    self.held = path
+                memoryview(d)[:] = self.frame
+            else:
+                d.set_pen(p.night)
+                d.clear()
+                import jpegdec
+
+                self.jpeg.open_file(path)
+                w, h = self.jpeg.get_width(), self.jpeg.get_height()
+                self.jpeg.decode(max(0, (W - w) // 2), max(0, (H - h) // 2), jpegdec.JPEG_SCALE_FULL, dither=True)
+        except Exception as e:
+            self.held = None
+            d.set_pen(p.night)
+            d.clear()
+            fx.centered(d, "CAN'T SHOW " + name[:20], 200, 2, p.red)
+            fx.centered(d, repr(e)[:40], 230, 2, p.faint)
+        if kind == "raw" and self.ctx.feed.stale:
+            d.set_pen(p.night)
+            d.rectangle(W - 104, H - 20, 104, 20)
+            d.set_pen(p.faint)
+            d.text("FEED STALE", W - 98, H - 16, 200, 2)
 
 
 class Brick(Screen):

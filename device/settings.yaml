@@ -3,6 +3,8 @@
 idle_seconds: 300      # no touch for this long: go to idle_screen
 idle_screen: photos
 photo_seconds: 300     # a new photo every 5 minutes
+photo_feed: https://presto.brick.nozdormu.cloud  # the upload page; empty: /sd/gallery only
+feed_minutes: 10       # how often to look for new photos
 units: imperial        # imperial (F) or metric (C)
 clock_24h: false       # false: 10:47 PM
 utc_offset: -5         # standard time, hours; the forecast's own offset wins once fetched

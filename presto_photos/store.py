@@ -32,6 +32,11 @@ def photo_id(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()[:16]
 
 
+def rev(m: dict) -> int:
+    """Which version of a photo's picture this is: when it was last made."""
+    return int(m.get("recropped") or m.get("converted") or m.get("added") or 0)
+
+
 def valid_id(s: str) -> bool:
     return len(s) == 16 and all(c in "0123456789abcdef" for c in s)
 
@@ -164,9 +169,11 @@ class Store:
         man = {
             "version": 1,
             "updated": int(time.time()),
+            # rev changes when the picture does (a re-crop), and is in the URLs:
+            # /photo/ is cached as immutable, and the Presto keeps one file per rev.
             "photos": [
-                {"id": m["id"], "added": m.get("added"), "jpg": f"/photo/{m['id']}.jpg",
-                 "rgb565": f"/photo/{m['id']}.rgb565"}
+                {"id": m["id"], "rev": rev(m), "added": m.get("added"),
+                 "jpg": f"/photo/{m['id']}.jpg?v={rev(m)}", "rgb565": f"/photo/{m['id']}.rgb565?v={rev(m)}"}
                 for m in ready
             ],
         }

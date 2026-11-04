@@ -2,7 +2,7 @@ import calendar
 import datetime as dt
 
 import pytest
-from neon import conf, nav, sprites, tz, wx
+from neon import conf, nav, photosync, sprites, tz, wx
 
 
 # --- tz ------------------------------------------------------------------
@@ -209,3 +209,29 @@ def test_ticks_diff_wraps():
     p.tap(470, 240, 0)
     assert p.tap(10, 240, top) == nav.REVEAL
     assert p.revealed(50)  # 150 ms later, across the wrap
+
+
+# --- photosync -----------------------------------------------------------
+def man(*photos):
+    return {"version": 1, "photos": [{"id": i, "rev": r, "rgb565": "/photo/%s.rgb565?v=%d" % (i, r)} for i, r in photos]}
+
+
+def test_sync_plan_fetches_new_and_keeps_order():
+    order, fetch, delete = photosync.plan(man(("a", 1), ("b", 2), ("c", 3)), ["c-3.rgb565", "a-1.rgb565"])
+    assert order == ["a-1.rgb565", "c-3.rgb565"]  # the manifest's order, not the card's
+    assert [p["id"] for p in fetch] == ["b"] and delete == []
+
+
+def test_sync_plan_drops_deleted_and_recropped():
+    order, fetch, delete = photosync.plan(man(("a", 5)), ["a-1.rgb565", "gone-2.rgb565"])
+    assert order == [] and [p["id"] for p in fetch] == ["a"]  # a re-crop is a new rev: fetched again
+    assert delete == ["a-1.rgb565", "gone-2.rgb565"]
+
+
+def test_sync_plan_empty_manifest_clears_the_card():
+    assert photosync.plan({"photos": []}, ["a-1.rgb565"]) == ([], [], ["a-1.rgb565"])
+
+
+def test_sync_settings_parse():
+    s = conf.load("device/settings.yaml", {})
+    assert s["photo_feed"] == "https://presto.brick.nozdormu.cloud" and s["feed_minutes"] == 10
