@@ -98,7 +98,7 @@ dialog::backdrop{background:rgba(3,2,8,.82)}
 .x{background:none;border:1px solid var(--line-bright);color:var(--text);font-family:var(--pixel);font-size:14px;width:40px;height:40px;border-radius:4px;cursor:pointer}
 .frame{position:relative;width:min(100%,480px);margin:0 auto;aspect-ratio:1;background:#000;border:2px solid #000;border-radius:3px;
   box-shadow:0 0 0 2px var(--line-bright),0 0 22px rgba(5,217,232,.18)}
-.frame img{display:block;width:100%;height:100%}
+.frame img{display:block;width:100%;height:100%;image-rendering:pixelated}
 .frame .label{position:absolute;left:6px;top:6px;font-family:var(--pixel);font-size:10px;color:var(--phosphor);background:rgba(0,0,0,.6);padding:1px 4px}
 .facts{font-family:var(--mono);font-size:13px;color:var(--dim);margin:12px 0;line-height:1.55}
 .facts .warn{color:var(--sodium)}
@@ -136,7 +136,7 @@ input[type=range]{width:100%;accent-color:var(--cyan);margin:12px 0 4px}
 
   <button class="add" id="add" type="button"><span class="plus">+</span> ADD PHOTOS</button>
   <input id="file" type="file" multiple accept="image/heic,image/heif,image/jpeg,image/png" hidden>
-  <p class="hint">Pick any photos. Each one becomes a 480&times;480 frame, dithered for the Presto's screen.</p>
+  <p class="hint">Pick any photos. Each one becomes a 240&times;240 frame, dithered for the Presto's screen.</p>
 
   <div class="queue" id="queue"></div>
 

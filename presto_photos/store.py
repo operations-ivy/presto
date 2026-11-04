@@ -5,8 +5,8 @@
     inbox/<upload>.json        who sent it, its name and type
     originals/<id>.<ext>       the original, kept ORIGINAL_DAYS after conversion
     masters/<id>.jpg           ~1600 px, kept while the photo is on the frame (re-crops)
-    out/<id>.rgb565            the Presto's frame (480x480 RGB565, big-endian)
-    out/<id>.jpg               480x480 JPEG
+    out/<id>.rgb565            the Presto's frame (pipeline.SIZE square RGB565, big-endian)
+    out/<id>.jpg               the same, as a JPEG
     previews/<id>.png          exactly what the frame looks like
     meta/<id>.json             the photo's record
     manifest.json              what the Presto shows, in order
@@ -33,8 +33,9 @@ def photo_id(data: bytes) -> str:
 
 
 def rev(m: dict) -> int:
-    """Which version of a photo's picture this is: when it was last made."""
-    return int(m.get("recropped") or m.get("converted") or m.get("added") or 0)
+    """Which version of a photo's picture this is: when it was last made (converted,
+    re-cropped, or re-rendered at a new frame size)."""
+    return int(max(m.get(k) or 0 for k in ("added", "converted", "recropped", "rendered")))
 
 
 def valid_id(s: str) -> bool:
@@ -169,10 +170,12 @@ class Store:
         man = {
             "version": 1,
             "updated": int(time.time()),
-            # rev changes when the picture does (a re-crop), and is in the URLs:
-            # /photo/ is cached as immutable, and the Presto keeps one file per rev.
+            # rev changes when the picture does (a re-crop, a new size), and is in
+            # the URLs: /photo/ is cached as immutable, and the Presto keeps one file
+            # per rev. size: the frame's side (480 before 2026-11-04), so a Presto
+            # only fetches frames its screen can show.
             "photos": [
-                {"id": m["id"], "rev": rev(m), "added": m.get("added"),
+                {"id": m["id"], "rev": rev(m), "size": m.get("size", 480), "added": m.get("added"),
                  "jpg": f"/photo/{m['id']}.jpg?v={rev(m)}", "rgb565": f"/photo/{m['id']}.rgb565?v={rev(m)}"}
                 for m in ready
             ],

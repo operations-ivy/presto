@@ -65,11 +65,12 @@ def test_p3_matrix_keeps_white_white():
 def test_render_outputs():
     lin, _ = pipeline.decode(jpeg((1600, 1200)))
     r = pipeline.render(lin)
-    assert len(r.rgb565) == 480 * 480 * 2
+    n = pipeline.SIZE
+    assert n == 240 and r.size == n and len(r.rgb565) == n * n * 2
     j = Image.open(io.BytesIO(r.jpeg))
-    assert j.size == (480, 480) and not j.info.get("progressive") and not j.info.get("progression")
+    assert j.size == (n, n) and not j.info.get("progressive") and not j.info.get("progression")
     pv = np.asarray(Image.open(io.BytesIO(r.preview_png)))
-    frame = np.frombuffer(r.rgb565, dtype=">u2").reshape(480, 480)
+    frame = np.frombuffer(r.rgb565, dtype=">u2").reshape(n, n)
     assert (pv == pipeline.rgb565_to_rgb8(frame)).all()  # the preview is exactly the frame
 
 
@@ -213,7 +214,7 @@ def test_upload_to_presto_files(site):
     man = json.loads(req(host, "/manifest.json")[1])
     assert man["photos"][0]["rgb565"].startswith(f"/photo/{pid}.rgb565?v=")
     code, frame, h = req(host, f"/photo/{pid}.rgb565")
-    assert code == 200 and len(frame) == 460800 and "immutable" in h["Cache-Control"]
+    assert code == 200 and len(frame) == 240 * 240 * 2 and "immutable" in h["Cache-Control"]
     assert req(host, f"/preview?id={pid}")[2]["Content-Type"] == "image/png"
     assert req(host, f"/photo/{'0' * 16}.jpg")[0] == 404
     assert req(host, "/preview?id=../../etc/passwd")[0] == 400
@@ -304,6 +305,29 @@ def test_manifest_rev_changes_on_recrop(tmp_path):
     assert q["rev"] > p["rev"] and q["rgb565"] != p["rgb565"]
 
 
+def test_old_480_photos_redone_at_240(tmp_path):
+    s = Store(tmp_path)
+    data = jpeg((1200, 600))
+    queue(s, data)
+    worker.tick(s)
+    (p,) = s.write_manifest()["photos"]
+    assert p["size"] == 240
+    m = s.meta(p["id"])  # make it look like a photo from before 240: no size, older
+    del m["size"]
+    auto_crop = m["crop"]
+    s.save_meta(m)
+    assert s.write_manifest()["photos"][0]["size"] == 480
+    s.expire_originals(now=time.time() + ORIGINAL_DAYS * 86400 + 60)  # from the master, then
+    time.sleep(1.1)  # revs are whole seconds
+    assert worker.tick(s) == 1
+    m = s.meta(p["id"])
+    assert m["size"] == 240 and m["crop"] == auto_crop and m["crop_auto"] is True  # still the automatic crop
+    assert len(s.p("out", p["id"] + ".rgb565").read_bytes()) == 240 * 240 * 2
+    (q,) = json.loads(s.p("manifest.json").read_text())["photos"]
+    assert q["size"] == 240 and q["rev"] > p["rev"]  # a new rev: the Presto fetches it again
+    assert worker.tick(s) == 0  # done once
+
+
 def test_presto_reports_what_it_shows(site):
     s, host = site
     data = jpeg((700, 700))
@@ -317,4 +341,4 @@ def test_presto_reports_what_it_shows(site):
     assert req(host, f"/api/showing?id={'0' * 16}", data=b"{}", headers=page_headers(host))[0] == 404
     m = json.loads(req(host, "/manifest.json")[1])["photos"][0]
     code, frame, _ = req(host, m["rgb565"])  # the ?v= URL serves the frame
-    assert code == 200 and len(frame) == 460800
+    assert code == 200 and len(frame) == 240 * 240 * 2

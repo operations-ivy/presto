@@ -1,6 +1,7 @@
-"""The converter: turns finished uploads into Presto images, redoes re-crops,
-and expires originals. A reconcile loop (rescan every POLL_S), so it catches
-up by itself after a restart and never depends on missing an event.
+"""The converter: turns finished uploads into Presto images, redoes re-crops and
+photos made at an old frame size, and expires originals. A reconcile loop
+(rescan every POLL_S), so it catches up by itself after a restart and never
+depends on missing an event.
 
 It runs in its own pod with no network egress (k8s_config's NetworkPolicy):
 image decoders have a history of holes, and a crafted file should find
@@ -100,6 +101,7 @@ def convert_one(store: Store, up: str) -> str | None:
                 "bit_depth": src.bit_depth},
         crop=list(r.crop),
         crop_auto=True,
+        size=r.size,
         downgraded=transcoded(src.format, info),
     )
     store.save_meta(m)
@@ -111,11 +113,16 @@ def convert_one(store: Store, up: str) -> str | None:
     return pid
 
 
+def _source(store: Store, m: dict):
+    """The best picture left to redo a photo from: the original while it's kept,
+    else the ~1600 px master."""
+    return store.p("originals", m["original"]) if m.get("original") else store.p("masters", m["id"] + ".jpg")
+
+
 def recrop(store: Store, m: dict) -> None:
-    """Redo a photo with the user's crop: from the original while it's kept,
-    else from the ~1600 px master."""
+    """Redo a photo with the user's crop."""
     pid = m["id"]
-    src = store.p("originals", m["original"]) if m.get("original") else store.p("masters", pid + ".jpg")
+    src = _source(store, m)
     with brick_observe.span("photos recrop", **{"photos.id": pid}):
         try:
             lin, _ = pipeline.decode(src.read_bytes())
@@ -126,11 +133,37 @@ def recrop(store: Store, m: dict) -> None:
             log.exception("recrop failed", photo=pid)
             return
     _write_outputs(store, pid, r)
-    m.update(status="ready", crop=list(r.crop), crop_auto=False, recropped=int(time.time()))
+    m.update(status="ready", crop=list(r.crop), crop_auto=False, size=r.size, recropped=int(time.time()))
     m.pop("recrop_error", None)
     store.save_meta(m)
     store.write_manifest()
     log.info("photo recropped", photo=pid)
+
+
+def stale_size(m: dict) -> bool:
+    """A ready photo whose frame was made at another size (480 before 2026-11-04)."""
+    return m.get("status") == "ready" and m.get("size", 480) != pipeline.SIZE and not m.get("resize_error")
+
+
+def resize(store: Store, m: dict) -> None:
+    """Redo a photo at pipeline.SIZE with the same crop. crop_auto stays as it was:
+    an automatic crop is still the automatic one (auto_crop doesn't depend on SIZE)."""
+    pid = m["id"]
+    with brick_observe.span("photos resize", **{"photos.id": pid, "photos.size": pipeline.SIZE}):
+        try:
+            lin, _ = pipeline.decode(_source(store, m).read_bytes())
+            r = pipeline.render(lin, tuple(m["crop"]))
+        except Exception as e:
+            m["resize_error"] = repr(e)  # keeps the old frame; not retried every pass
+            store.save_meta(m)
+            CONVERTED.labels("resize_error").inc()
+            log.exception("resize failed", photo=pid)
+            return
+    _write_outputs(store, pid, r)
+    m.update(size=r.size, rendered=int(time.time()))
+    store.save_meta(m)
+    CONVERTED.labels("resized").inc()
+    log.info("photo resized", photo=pid, size=r.size)
 
 
 def _write_outputs(store: Store, pid: str, r: pipeline.Rendered) -> None:
@@ -149,6 +182,14 @@ def tick(store: Store) -> int:
         if m.get("status") == "recrop":
             recrop(store, m)
             done += 1
+    resized = 0
+    for m in store.photos():
+        if stale_size(m):
+            resize(store, m)
+            resized += 1
+    if resized:
+        store.write_manifest()  # once, after all of them
+        done += resized
     store.expire_originals()
     store.sweep_parts()
     photos = store.photos()

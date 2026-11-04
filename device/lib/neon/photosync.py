@@ -18,7 +18,8 @@ import os
 import time
 
 DIR = "/sd/feed"
-FRAME_BYTES = 240 * 240 * 2  # the app runs at 240x240
+SIZE = 240  # the app runs at 240x240
+FRAME_BYTES = SIZE * SIZE * 2
 EXT = ".rgb565"
 
 
@@ -33,8 +34,11 @@ def name_of(photo):
 
 def plan(manifest, local):
     """(order, fetch, delete): the card's files in the manifest's order, the photos
-    still to download (manifest entries), and the local files to remove."""
-    wanted = [(name_of(p), p) for p in manifest.get("photos", [])]
+    still to download (manifest entries), and the local files to remove.
+
+    Only frames of this screen's size count: a 480 frame (the manifest says 480 for
+    photos the converter hasn't redone yet) would read as a wrong 240 one."""
+    wanted = [(name_of(p), p) for p in manifest.get("photos", []) if p.get("size", 480) == SIZE]
     names = set(n for n, _ in wanted)
     have = set(local)
     order = [n for n, _ in wanted if n in have]
