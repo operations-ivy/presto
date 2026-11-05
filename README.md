@@ -76,6 +76,8 @@ art in `device/lib/neon/sprites.py`, like brick-status's `tools/pixel_art.py`).
 
 Things that have bitten (details in homelab-context `docs/hosts.md`):
 
+- **No `[::-1]`**: MicroPython slices only with step 1 (`NotImplementedError`
+  on the device, fine in the CPython tests). Use `reversed()`.
 - **`/boot.py` never runs**: the firmware freezes its own `boot.py`, which
   shadows the flash's. Start-up code goes in `main.py`.
 - **`Presto()` defaults to 240x240** (pixel-doubled). Full detail needs

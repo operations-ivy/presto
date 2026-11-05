@@ -57,7 +57,6 @@ def run(presto, secrets):
 
     apps = {c.name: c(ctx) for c in (screens.Weather, screens.Photos, screens.Brick, screens.Fun)}
     ctx.arms = {"up": s["arm_up"], "left": s["arm_left"], "right": s["arm_right"], "down": s["arm_down"]}
-    ctx.labels = {n: a.label for n, a in apps.items()}
     screens_by_name = dict(apps)
     screens_by_name[nav.HOME] = home.Home(ctx)
     plus = nav.Plus(ctx.arms)

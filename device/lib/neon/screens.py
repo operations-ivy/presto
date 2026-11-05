@@ -12,7 +12,6 @@ W = H = 240
 
 class Screen:
     name = "?"
-    label = "?"
     frame_ms = 200  # how often draw() runs; None = only when dirty
     led_hue = None  # hue for the back LEDs, or None for off
 
@@ -43,7 +42,7 @@ class Screen:
 class Weather(Screen):
     """2049 haze: warm orange when it's hot, cold teal when it's wet; the room as holograms."""
 
-    name, label = "weather", "WEATHER"
+    name = "weather"
     frame_ms = 160
     led_hue = 0.88
 
@@ -112,7 +111,7 @@ class Photos(Screen):
     button) is a 7 ms copy, and the card is read only when the photo changes
     (a raw frame ~0.25 s; a JPEG decode ~2 s, once)."""
 
-    name, label = "photos", "PHOTOS"
+    name = "photos"
     frame_ms = None
     led_hue = None
     REPORT_AFTER_MS = 20000  # tell the page once a photo has stayed up this long
@@ -245,7 +244,7 @@ class Brick(Screen):
     """Matrix terminal. The cluster feed isn't built yet: the columns are decorative and
     the panel shows the Presto itself. Passive only: never beeps or takes over."""
 
-    name, label = "brick", "BRICK"
+    name = "brick"
     frame_ms = 90
     led_hue = 0.38
 
@@ -315,7 +314,7 @@ class Brick(Screen):
 class Fun(Screen):
     """Signal lost: the fun one isn't decided yet."""
 
-    name, label = "fun", "???"
+    name = "fun"
     frame_ms = 120
     led_hue = 0.78
 
