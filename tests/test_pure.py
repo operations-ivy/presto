@@ -527,3 +527,29 @@ def test_daytime_falls_back_to_the_forecasts_is_day():
 )
 def test_sky_by_weather_and_time(kind, day, sky):
     assert wx.sky(kind, day) == sky
+
+
+def test_glyph_rain_draws_n_drops_each_with_its_trail_and_respawns_above():
+    from neon import fx
+
+    class Display:
+        def __init__(self):
+            self.chars = []
+
+        def set_pen(self, pen):
+            self.pen = pen
+
+        def character(self, code, x, y, scale):
+            self.chars.append((chr(code), x, y, self.pen))
+
+    rain = fx.GlyphDrops(n=30, top=-10, bottom=226)
+    pens = (("far", "far-trail"), ("near", "near-trail"), ("head", "head-trail"))
+    for _ in range(200):
+        d = Display()
+        rain.step_draw(d, pens)
+        assert len(d.chars) == 60  # 30 drops, a trail glyph behind each
+        trails, glyphs = d.chars[0::2], d.chars[1::2]
+        for (tc, tx, ty, tpen), (gc, gx, gy, gpen) in zip(trails, glyphs):
+            assert tc in fx.GLYPHS and gc in fx.GLYPHS
+            assert (tx, ty + 9) == (gx, gy) and tpen == gpen + "-trail"  # one line behind, darker
+            assert 0 <= gx <= fx.W - 6 and gy <= 226

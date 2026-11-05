@@ -100,9 +100,12 @@ class Home:
         self.building_pen = p.rgb(10, 8, 20)
         self.building_edge = p.rgb(24, 18, 44)
         self.win_pens = (p.sodium, p.amber, p.cyan)
-        self.rain_far = p.phosphor_dim  # the glyph rain: dim far away, bright close up
-        self.rain_near = p.rgb(30, 170, 90)
-        self.rain_head = p.phosphor
+        # the glyph rain: (glyph, its darker trail), dim far away, bright close up
+        self.rain_pens = (
+            (p.phosphor_dim, p.rgb(4, 32, 16)),
+            (p.rgb(30, 170, 90), p.rgb(10, 80, 40)),
+            (p.phosphor, p.rgb(20, 120, 64)),
+        )
         self.entered_at = 0
         self.glitch_at = time.ticks_add(time.ticks_ms(), 20000)
         self.frame = 0
@@ -239,7 +242,7 @@ class Home:
         # rain, as hard as the forecast says
         self.rain.n = wx.RAIN.get(kind, 15)
         if self.rain.n:
-            self.rain.step_draw(d, self.rain_far, self.rain_near, self.rain_head)
+            self.rain.step_draw(d, self.rain_pens)
 
         self._clock(d, p, now_ms)
         self._forecast(d, p)

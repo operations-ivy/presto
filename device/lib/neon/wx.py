@@ -95,8 +95,8 @@ def daytime(s, minute):
 DAY_SKIES = {"clear": "haze", "partly": "grey_haze"}
 
 
-def sky(kind, day):
-    return DAY_SKIES.get(kind, "overcast") if day else "night"
+def sky(weather_kind, day):
+    return DAY_SKIES.get(weather_kind, "overcast") if day else "night"
 
 
 def line(s, unit="°"):
