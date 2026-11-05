@@ -2,10 +2,10 @@
 # Pimoroni's examples and menu live in /examples on the flash.
 import network
 
-try:  # roll back a Wi-Fi update that didn't run (presto#9); never fatal
+try:  # install, or roll back, a Wi-Fi update (presto#9); never fatal
     import ota_boot
 
-    _ota = ota_boot.guard()
+    _ota = ota_boot.boot()  # install a downloaded update, guard a trial: before the display
 except Exception as e:
     print("[ota] guard:", repr(e))
     _ota = None

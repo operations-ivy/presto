@@ -35,9 +35,12 @@ done < <(find "$dev" -type f \( -name '*.py' -o -name '*.yaml' \) | sort)
 # Presto then doesn't fetch the same files again, and a USB deploy ends any
 # update on trial (and its backups).
 version=$(python3 "$here/presto_photos/device.py" "$dev" | python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])')
-args+=(+ exec "import ota_boot
-ota_boot.remove_tree('/ota/prev')
-ota_boot.remove_tree('/ota/new')
+args+=(+ exec "import os, ota_boot
+ota_boot.remove_tree('/ota')  # the first design kept backups on the flash
+ota_boot.write({'version': '$version', 'status': 'ok'})
+if ota_boot.mount_sd():  # a downloaded update waiting there would install over this
+    ota_boot.remove_tree('/sd/ota')
+    os.umount('/sd')
 ota_boot.write({'version': '$version', 'status': 'ok'})")
 
 "$mpr" connect "$port" "${args[@]}"

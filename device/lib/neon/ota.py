@@ -2,13 +2,15 @@
 
 Every EVERY_S (when nobody's touching the screen) it fetches the upload page's
 /device/manifest.json. A new version means: fetch /device/bundle (one TLS
-connect for every file), check each file's sha256 against the manifest, stage
-them under /ota/new, keep the files they replace in /ota/prev, mark the update
-"trial" (/ota/state.json), swap the files in, leave Wi-Fi cleanly and restart.
-Once the app has run CONFIRM_MS on the new code it confirms it; if it doesn't,
-ota_boot rolls it back (main.py). main.py and ota_boot.py never come this way.
+connect for every file), check each file's sha256 against the manifest, and
+write the changed ones to the SD card (/sd/ota/new) with /sd/ota/pending.json;
+then leave Wi-Fi cleanly and restart. ota_boot copies them into the flash at the
+next boot, before the display starts: with the display running, a flash write
+deadlocks the firmware (2026-11-05), so this module never writes the flash.
+Once the app has run CONFIRM_MS on new code it writes /sd/ota/confirmed; if it
+doesn't, ota_boot rolls the update back. main.py and ota_boot.py never come this way.
 
-Bundle, read() and plan() are pure (tested on the laptop); Updater does the I/O.
+Reader, read() and plan() are pure (tested on the laptop); Updater does the I/O.
 """
 
 import binascii
@@ -19,7 +21,6 @@ import time
 
 import ota_boot
 
-NEW = "/ota/new"
 CONFIRM_MS = 60000
 QUIET_MS = 15000  # no TLS connect within this long of a touch (it stalls the screen)
 
@@ -125,12 +126,12 @@ class Updater:
         self.url = (url or "").rstrip("/")
         self.every_s = every_s
         self.root = root
-        state = ota_boot.read(root) or {}
-        self.state = state
-        self.version = state.get("version")
+        self.state = ota_boot.read(root) or {}
+        self.version = self.state.get("version")
         self.started = time.ticks_ms()
         self.next_at = time.ticks_add(self.started, 90000)  # not in the first minute and a half
-        self.confirmed = state.get("status") != "trial"
+        self.confirmed = self.state.get("status") != "trial"
+        self.warned = False
 
     def step(self, net, last_touch_ms, now_ms):
         if not self.confirmed and time.ticks_diff(now_ms, self.started) > CONFIRM_MS:
@@ -144,21 +145,21 @@ class Updater:
             self.check()
         except Exception as e:  # never let an update take the app down
             print("[neon] ota:", repr(e))
-            ota_boot.remove_tree(self.root + NEW)
+            ota_boot.remove_tree(self.root + ota_boot.NEW)
 
     def confirm(self):
-        """The new code has run a minute: it's the good one now."""
+        """The new code has run a minute: tell the next boot it's the good one (on the SD card)."""
         self.confirmed = True
-        state = {k: v for k, v in self.state.items() if k not in ("boots", "added")}
-        state["status"] = "ok"
-        ota_boot.write(state, self.root)
-        ota_boot.remove_tree(self.root + ota_boot.PREV)
-        self.state = state
-        print("[neon] ota: %s confirmed" % state.get("version"))
+        if ota_boot.is_dir(self.root + ota_boot.SD):
+            ota_boot.write_json(self.root + ota_boot.CONFIRMED, {"version": self.version})
+            print("[neon] ota: %s confirmed" % self.version)
 
     def _get(self, path):
+        import gc
+
         import requests
 
+        gc.collect()
         r = requests.get(self.url + path, timeout=15)
         if r.status_code != 200:
             r.close()
@@ -166,57 +167,45 @@ class Updater:
         return r
 
     def check(self):
+        if not ota_boot.is_dir(self.root + ota_boot.SD):  # updates are staged on the card
+            if not self.warned:
+                print("[neon] ota: no SD card, no Wi-Fi updates")
+                self.warned = True
+            return False
+        if not self.confirmed or ota_boot.read_json(self.root + ota_boot.PENDING):
+            return False  # on trial, or one already waiting for the next boot
         r = self._get("/manifest.json")
         try:
             manifest = r.json()
         finally:
             r.close()
         v = manifest["version"]
-        if v == self.version or v == self.state.get("bad") or not self.confirmed:
+        if v == self.version or v == self.state.get("bad"):
             return False
         changed, added = plan(manifest, lambda p: file_sha(self.root + "/" + p))
         print("[neon] ota: %s -> %s, %d files" % (self.version, v, len(changed)))
-        if not changed:  # the same files under a new version (a USB deploy, say)
-            self.state = {k: x for k, x in self.state.items()}
-            self.state["version"] = self.version = v
-            ota_boot.write(self.state, self.root)
+        pending = {"version": v, "prev": self.version, "files": changed, "added": added}
+        if not changed:  # the same files under a new version (a USB deploy, say): the next boot notes it
+            ota_boot.write_json(self.root + ota_boot.PENDING, pending)
+            self.version = v
             return False
-        ota_boot.remove_tree(self.root + NEW)
+        ota_boot.remove_tree(self.root + ota_boot.NEW)
         r = self._get("/bundle")
         try:
             read(r.raw, manifest, set(changed), self._stage)
         finally:
             r.close()
-        self._apply(v, changed, added)
+        ota_boot.write_json(self.root + ota_boot.PENDING, pending)
+        print("[neon] ota: %s downloaded, restarting to install it" % v)
+        restart()
         return True
 
     def _stage(self, path, pieces):
-        dst = self.root + NEW + "/" + path
+        dst = self.root + ota_boot.NEW + "/" + path
         ota_boot.makedirs(dst.rsplit("/", 1)[0])
         with open(dst, "wb") as f:
             for piece in pieces:
                 f.write(piece)
-
-    def _apply(self, version, changed, added):
-        root, prev = self.root, self.root + ota_boot.PREV
-        ota_boot.remove_tree(prev)
-        for path in changed:
-            if path not in added:
-                ota_boot.copy(root + "/" + path, prev + "/" + path)
-        # trial first: if the swap is cut short, the next boots roll it back
-        ota_boot.write({"version": version, "status": "trial", "boots": 0, "prev": self.version,
-                        "added": added}, root)
-        for path in changed:
-            dst = root + "/" + path
-            ota_boot.makedirs(dst.rsplit("/", 1)[0])
-            try:
-                os.remove(dst)
-            except OSError:
-                pass
-            os.rename(root + NEW + "/" + path, dst)
-        ota_boot.remove_tree(root + NEW)
-        print("[neon] ota: %s installed, restarting" % version)
-        restart()
 
 
 def restart():

@@ -90,16 +90,14 @@ def test_plan_lists_changed_and_added():
     assert ota.plan(m, local.get) == (["b.py", "c.py"], ["c.py"])
 
 
-# --- a whole update, and its rollback, on a fake flash ------------------------
-class Net:
-    up = True
-
-
-def flash_with(tmp_path, files, state):
+# --- a whole update, and its rollback, on a fake flash and SD card ------------
+def flash_with(tmp_path, files, state, sd=True):
     root = tmp_path / "flash"
     for path, text in files.items():
         (root / path).parent.mkdir(parents=True, exist_ok=True)
         (root / path).write_text(text)
+    if sd:
+        (root / "sd").mkdir(parents=True, exist_ok=True)
     ota_boot.write(state, str(root))
     return str(root)
 
@@ -125,17 +123,24 @@ def updater_for(root, rel, monkeypatch):
     return up, restarts
 
 
-def test_an_update_swaps_files_in_keeps_the_old_and_boots_on_trial(tmp_path, monkeypatch):
+def test_the_app_only_writes_the_sd_card_and_boot_installs(tmp_path, monkeypatch):
     root = flash_with(tmp_path, {"lib/neon/app.py": "old app", "settings.yaml": "same"}, {"version": "v1", "status": "ok"})
     rel = make_device(tmp_path, {"lib/neon/app.py": "new app", "settings.yaml": "same", "lib/neon/new.py": "added"})
     up, restarts = updater_for(root, rel, monkeypatch)
     assert up.check() is True and restarts == [1]
+    # in the app: nothing on the flash changed (a flash write there deadlocks the firmware)
+    assert Path(root, "lib/neon/app.py").read_text() == "old app"
+    assert ota_boot.read(root) == {"version": "v1", "status": "ok"}
+    assert Path(root, "sd/ota/new/lib/neon/app.py").read_text() == "new app"
+    assert not Path(root, "sd/ota/new/settings.yaml").exists()  # unchanged: not downloaded to disk
+    # the next boot, before the display: install
+    state = ota_boot.install(root)
+    assert state == {"version": rel.version, "status": "trial", "boots": 0, "prev": "v1", "added": ["lib/neon/new.py"]}
     assert Path(root, "lib/neon/app.py").read_text() == "new app"
     assert Path(root, "lib/neon/new.py").read_text() == "added"
-    assert Path(root, "ota/prev/lib/neon/app.py").read_text() == "old app"
-    assert not Path(root, "ota/prev/settings.yaml").exists()  # unchanged: not touched
-    state = ota_boot.read(root)
-    assert state == {"version": rel.version, "status": "trial", "boots": 0, "prev": "v1", "added": ["lib/neon/new.py"]}
+    assert Path(root, "sd/ota/prev/lib/neon/app.py").read_text() == "old app"
+    assert not Path(root, "sd/ota/pending.json").exists() and not Path(root, "sd/ota/new").exists()
+    assert ota_boot.install(root) is None  # nothing pending any more
 
     # two boots that never confirm, then the third rolls it back
     assert ota_boot.guard(root)["boots"] == 1
@@ -143,35 +148,51 @@ def test_an_update_swaps_files_in_keeps_the_old_and_boots_on_trial(tmp_path, mon
     back = ota_boot.guard(root)
     assert back == {"version": "v1", "status": "ok", "bad": rel.version}
     assert Path(root, "lib/neon/app.py").read_text() == "old app"
-    assert not Path(root, "lib/neon/new.py").exists() and not Path(root, "ota/prev").exists()
+    assert not Path(root, "lib/neon/new.py").exists() and not Path(root, "sd/ota/prev").exists()
 
     # and the bad version isn't fetched again
     up2, restarts2 = updater_for(root, rel, monkeypatch)
     assert up2.check() is False and restarts2 == []
 
 
-def test_a_confirmed_update_drops_its_backups(tmp_path, monkeypatch):
+def test_a_confirmed_update_is_ok_at_the_next_boot(tmp_path, monkeypatch):
     root = flash_with(tmp_path, {"lib/neon/app.py": "old"}, {"version": "v1", "status": "ok"})
     rel = make_device(tmp_path, {"lib/neon/app.py": "new"})
     up, _ = updater_for(root, rel, monkeypatch)
     up.check()
-    after = ota.Updater("https://presto.example/device", root=root)  # the next boot
-    ota_boot.guard(root)
-    after.confirm()
-    assert ota_boot.read(root) == {"version": rel.version, "status": "ok", "prev": "v1"}
-    assert not Path(root, "ota/prev").exists()
+    ota_boot.install(root)
+    ota_boot.guard(root)  # the first trial boot
+    running = ota.Updater("https://presto.example/device", root=root)
+    assert not running.confirmed
+    running.confirm()  # a minute in: written to the card, not the flash
+    assert json.loads(Path(root, "sd/ota/confirmed").read_text()) == {"version": rel.version}
+    assert ota_boot.read(root)["status"] == "trial"
+    assert ota_boot.guard(root) == {"version": rel.version, "status": "ok", "prev": "v1"}  # the next boot
+    assert not Path(root, "sd/ota/prev").exists() and not Path(root, "sd/ota/confirmed").exists()
 
 
-def test_same_files_new_version_just_records_it(tmp_path, monkeypatch):
+def test_same_files_new_version_is_recorded_at_boot(tmp_path, monkeypatch):
     root = flash_with(tmp_path, {"lib/neon/app.py": "same"}, {"version": "usb", "status": "ok"})
     rel = make_device(tmp_path, {"lib/neon/app.py": "same"})
     up, restarts = updater_for(root, rel, monkeypatch)
     assert up.check() is False and restarts == []
-    assert ota_boot.read(root)["version"] == rel.version
+    assert ota_boot.read(root)["version"] == "usb"  # not written from the app
+    assert ota_boot.install(root) == {"version": rel.version, "status": "ok"}
 
 
-def test_no_check_while_a_trial_is_unconfirmed(tmp_path, monkeypatch):
+def test_no_check_while_on_trial_or_with_one_pending(tmp_path, monkeypatch):
     root = flash_with(tmp_path, {"lib/neon/app.py": "x"}, {"version": "v2", "status": "trial", "boots": 1})
+    rel = make_device(tmp_path, {"lib/neon/app.py": "y"})
+    up, restarts = updater_for(root, rel, monkeypatch)
+    assert up.check() is False and restarts == []
+    root2 = flash_with(tmp_path / "b", {"lib/neon/app.py": "x"}, {"version": "v1", "status": "ok"})
+    ota_boot.write_json(root2 + ota_boot.PENDING, {"version": "v2", "files": []})
+    up2, restarts2 = updater_for(root2, rel, monkeypatch)
+    assert up2.check() is False and restarts2 == []
+
+
+def test_no_sd_card_no_updates(tmp_path, monkeypatch):
+    root = flash_with(tmp_path, {"lib/neon/app.py": "x"}, {"version": "v1", "status": "ok"}, sd=False)
     rel = make_device(tmp_path, {"lib/neon/app.py": "y"})
     up, restarts = updater_for(root, rel, monkeypatch)
     assert up.check() is False and restarts == []
