@@ -4,7 +4,7 @@ import math
 import random
 import time
 
-from neon import fx, sprites, theme, tz, wx
+from neon import fx, sightings, sprites, theme, tz, wx
 
 W = H = 240  # the Presto at its native speed: 240x240, doubled to the 480 panel
 SKY_BOTTOM = 165
@@ -82,6 +82,9 @@ class Home:
             }
             for t in range(16)
         ]
+        # rare sightings in the right half of the sky: only with the left-aligned layout
+        minutes = ctx.settings.get("sighting_minutes", 15) if ctx.settings.get("home_align") == "left" else 0
+        self.sights = sightings.Sightings(ctx, minutes)
         self.sky_day = [p.rgb(*theme.mix(theme.PALETTE["dust_dark"], theme.PALETTE["dust"], i / 7)) for i in range(8)]
         self.sky_night = [p.rgb(*theme.mix(theme.PALETTE["night"], (30, 14, 52), i / 7)) for i in range(8)]
         self.building_pen = p.rgb(10, 8, 20)
@@ -193,6 +196,7 @@ class Home:
 
         # the flying car
         self._car(d, p, now_ms)
+        self.sights.back(d, now_ms)  # behind the city
 
         # skyline and windows
         for bx, by, bw, bh_ in self.buildings:
@@ -209,6 +213,7 @@ class Home:
                 d.set_pen(self.win_pens[c])
                 d.rectangle(wx_, wy, 2, 2)
         self._sign(d, p, now_ms)
+        self.sights.front(d, now_ms)  # over the rooftops
         d.set_pen(p.night)
         d.rectangle(0, GROUND, W, H - GROUND)
 
@@ -267,8 +272,10 @@ class Home:
             date = tz.date_line(lt)
         else:
             s, date = "--:--", "SYNCING TIME" if ctx.net.up else "NO SIGNAL"
-        scale = 6  # 48 px tall (was 5): bigger, still clear of the top arrow and the forecast
         left = ctx.settings.get("home_align") == "left"
+        # centered: 48 px tall, clear of the top arrow and the forecast; left: 32 px, leaving
+        # the right half of the sky to the sightings
+        scale = 4 if left else 6
         x = LEFT if left else (W - d.measure_text(s, scale) - (26 if ampm else 0)) // 2
         y = 26
         if ampm:
@@ -288,7 +295,7 @@ class Home:
             fx.neon_text(d, p, s, x, y, scale, p.cyan, p.cyan_glow, flicker)
         if left:
             d.set_pen(p.amber)
-            d.text(date, LEFT, y + 8 * scale + 6, W, 2)
+            d.text(date, LEFT, y + 8 * scale + 5, W, 1)  # 63..71
         else:
             fx.centered(d, date, y + 8 * scale + 6, 2, p.amber)  # 80..96, above the forecast at 102
 
@@ -296,10 +303,10 @@ class Home:
         ctx = self.ctx
         s = ctx.weather.summary
         kind = ctx.weather.kind
-        y = 102
+        left = ctx.settings.get("home_align") == "left"
+        y = 78 if left else 102
         # the icon: animated, two frames
         alt = (self.frame // 5) % 2
-        left = ctx.settings.get("home_align") == "left"
         ix = LEFT if left else 44
         if kind in ("clear", "partly"):
             self.icons["sun" if s and s.get("is_day") else "moon"].draw(d, p.letters, ix, y, 2)
@@ -313,19 +320,20 @@ class Home:
                 self.icons["snow_b" if alt else "snow_a"].draw(d, p.letters, ix, y + 17, 2)
             if kind == "fog":
                 self.icons["fog"].draw(d, p.letters, ix, y + 13, 2)
-        tx = ix + 38
+        tx = ix + 34 if left else ix + 38
+        big, step, wrap = (1, 10, 100) if left else (2, 18, 158)  # left: the small font, in ~100 px
         d.set_pen(p.text)
         if not ctx.weather.configured:
             d.text("SET LATITUDE/", tx, y + 1, 150, 1)
             d.text("LONGITUDE", tx, y + 10, 150, 1)
         else:
-            d.text(wx.line(s, ""), tx, y + 1, 158, 2)
+            d.text(wx.line(s, ""), tx, y + 1, wrap, big)
             d.set_pen(p.dim)
-            d.text(wx.LABELS.get(kind, "NO DATA"), tx, y + 19, 158, 1)
+            d.text(wx.LABELS.get(kind, "NO DATA"), tx, y + 1 + step, wrap, 1)
         room = ctx.room
         if room.temp is not None:
             d.set_pen(p.sodium)
-            d.text("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), tx, y + 30, 158, 1)
+            d.text("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), tx, y + 1 + step + (10 if left else 11), wrap, 1)
 
     def _arms(self, d, p, now_ms):
         # no app names (presto#11): just the four chevrons, fading slowly green <-> black
