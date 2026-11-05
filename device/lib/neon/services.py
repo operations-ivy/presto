@@ -170,11 +170,11 @@ class Room:
         except Exception as e:
             log("ltr559:", repr(e))
         self.temp = self.humidity = self.pressure = self.lux = self.prox = None
-        self._last = -10**9
+        self._last = None  # never read yet (not a fake old tick: ticks wrap, README)
 
     def read(self, every_ms=3000):
         now = time.ticks_ms()
-        if time.ticks_diff(now, self._last) < every_ms:
+        if self._last is not None and time.ticks_diff(now, self._last) < every_ms:
             return
         self._last = now
         if self.bme is not None:

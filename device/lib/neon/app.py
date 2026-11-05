@@ -67,7 +67,7 @@ def run(presto, secrets):
     cur.enter()
     last_touch = time.ticks_ms()
     down = None  # (x0, y0, t0, last_x, last_y, two)
-    last_frame = -10**9
+    last_frame = time.ticks_ms()  # the first frame is drawn anyway: cur starts dirty
     last_light = 0
     frames, fps_at = 0, time.ticks_ms()
     tab_up = False  # the hidden HOME button is showing

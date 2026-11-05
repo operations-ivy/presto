@@ -76,6 +76,10 @@ art in `device/lib/neon/sprites.py`, like brick-status's `tools/pixel_art.py`).
 
 Things that have bitten (details in homelab-context `docs/hosts.md`):
 
+- **No fake "long ago" ticks**: `time.ticks_diff(now, -10**9)` isn't a big
+  positive number. Ticks wrap at 2^30 ms, so it reads as ~20 hours *ahead*,
+  and the sensor stick went unread until the Presto had been up that long. Use
+  `None` for "never".
 - **No `[::-1]`**: MicroPython slices only with step 1 (`NotImplementedError`
   on the device, fine in the CPython tests). Use `reversed()`.
 - **`/boot.py` never runs**: the firmware freezes its own `boot.py`, which
