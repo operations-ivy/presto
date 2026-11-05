@@ -2,7 +2,7 @@
 
 import time
 
-from neon import conf, fx, nav, services, theme
+from neon import card, conf, fx, nav, services, theme
 
 DEFAULTS = {
     "idle_seconds": 14400,  # 4 h with no touch: go to idle_screen
@@ -57,7 +57,7 @@ def run(presto, secrets):
     ctx.weather = services.Weather(secrets, ctx.fahrenheit)
     ctx.room = services.Room(ctx.fahrenheit, s["temp_offset_c"])
     chirp = services.Chirp(s["chirp"], s["chirp_volume"])
-    _mount_sd()
+    card.mount()
     from neon import photosync
 
     ctx.feed = photosync.Feed(s["photo_feed"], s["feed_minutes"] * 60)
@@ -223,17 +223,3 @@ def _light(ctx, presto, cur, now):
             presto.set_led_rgb(i, 0, 0, 0)
     elif cur.name != "home" and not ctx.mirror.look:
         cur.leds(presto, now)
-
-
-def _mount_sd():
-    import os
-
-    import machine
-    import sdcard
-
-    try:
-        spi = machine.SPI(0, sck=machine.Pin(34), mosi=machine.Pin(35), miso=machine.Pin(36))
-        # 24 MHz: the driver's default 1.3 MHz read a 460 KB file in 4.7 s, 24 MHz in 1.3 s
-        os.mount(sdcard.SDCard(spi, machine.Pin(39), baudrate=24_000_000), "/sd")
-    except Exception as e:
-        services.log("sd:", repr(e))
