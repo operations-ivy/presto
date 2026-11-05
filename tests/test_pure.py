@@ -378,3 +378,54 @@ def test_uplink_health_flags_and_stale():
 
 def test_brick_feed_setting():
     assert conf.load("device/settings.yaml", {})["brick_feed"] == "https://presto.brick.nozdormu.cloud/brick.json"
+
+
+# --- the back LEDs mirror plasma ------------------------------------------
+from neon import mirror  # noqa: E402
+
+PLASMA = {  # plasma's GET /, as brick-cicd-config's plasma-look serves it
+    "showing": {"source": "board", "pattern": "calm", "priority": 90, "look": {"effect": "pulse", "seconds": 4}},
+    "signals": [
+        {"source": "board", "pattern": "calm", "priority": 90, "look": {"effect": "pulse", "seconds": 4}},
+        {"source": "jenkins-build-image", "pattern": "stage-build", "priority": 50,
+         "look": {"effect": "rainbow", "seconds": 0.75}},
+        {"source": "board-buttons", "pattern": "buttons", "priority": 10, "look": None},
+    ],
+}
+
+
+def test_mirror_picks_the_strongest_signal_with_a_look_but_not_the_boards():
+    assert mirror.pick(PLASMA) == {"effect": "rainbow", "seconds": 0.75}
+    assert mirror.pick({"signals": [PLASMA["signals"][0]]}) is None
+    assert mirror.pick({"signals": []}) is None and mirror.pick(None) is None
+    assert mirror.pick({"signals": [{"source": "old-plasma", "pattern": "x"}]}) is None  # before plasma-look
+
+
+def test_mirror_every_effect_gives_seven_dim_colours():
+    effects = ["solid", "pulse", "flash", "chase", "stream", "rush", "scanner", "converge", "fill",
+               "rainbow", "nightly", "boil", "something-new"]
+    for effect in effects:
+        for t in (0, 137, 500, 1999):
+            leds = mirror.frame({"effect": effect, "color": "#00ff00", "seconds": 2}, t)
+            assert len(leds) == 7, effect
+            assert all(0 <= v <= int(255 * mirror.LEVEL) for c in leds for v in c), (effect, leds)
+
+
+def test_mirror_effects_move():
+    look = {"effect": "chase", "color": "#ffffff", "seconds": 0.7}
+    brightest = [max(range(7), key=lambda i: mirror.frame(look, t)[i][0]) for t in (0, 100, 200)]
+    assert brightest == [0, 1, 2]
+    solid = mirror.frame({"effect": "solid", "color": "#ff8000"}, 0)
+    assert solid[0] == (int(255 * mirror.LEVEL), int(128 * mirror.LEVEL), 0) and len(set(solid)) == 1
+    assert mirror.frame({"effect": "flash", "color": "#ff0000", "seconds": 1}, 600)[0] == (0, 0, 0)
+
+
+def test_mirror_url_and_colours():
+    assert mirror.parse_url("http://brick9000:8766/") == ("brick9000", 8766, "/")
+    assert mirror.parse_url("http://plasma/x") == ("plasma", 80, "/x")
+    assert mirror.parse_colour("#ff8000") == (255, 128, 0) and mirror.parse_colour(None) == (255, 255, 255)
+    assert mirror.hsv(0, 1, 1) == (255, 0, 0) and mirror.hsv(1 / 3, 1, 1)[1] == 255
+
+
+def test_plasma_url_setting():
+    assert conf.load("device/settings.yaml", {})["plasma_url"] == "http://brick9000:8766/"
