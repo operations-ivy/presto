@@ -17,6 +17,7 @@ Presto says STALE.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import threading
@@ -113,23 +114,39 @@ def sensor_name(friendly: str) -> str:
     return s or friendly
 
 
+def _maint_left(end: float, now: float) -> int:
+    """A maintenance window's seconds left, or -1 when it has no end."""
+    return -1 if math.isinf(end) else max(0, int(end - now))
+
+
+def _runs_on(pods_by_ns: dict[str, list[str]], namespace: str, workload: str) -> bool:
+    """A pod of this workload (named <workload>-<suffix>) is among these."""
+    return any(pod.startswith(f"{workload}-") for pod in pods_by_ns.get(namespace, ()))
+
+
+def _host_of(m: dict, names: dict[str, str]) -> str:
+    """A scrape target's host: node_exporter's nodename for it, else its instance without the port."""
+    instance = m.get("instance", "")
+    return names.get(instance, instance.split(":")[0])
+
+
 def build(r: dict[str, list[tuple[dict, float]]], now: float) -> dict:
     """The feed from the QUERIES' results (pure: tested without Prometheus)."""
     names = {m["instance"]: m.get("nodename", m["instance"]) for m, _ in r["uname"]}
     maint = {m["node"]: v for m, v in r["maint"] if "node" in m}
     resting = {(m.get("namespace"), m.get("pod")) for m, _ in r["pod_nodes"] if m.get("node") in maint}
-
-    def on_resting(namespace, workload):  # a pod of this workload runs on a node in maintenance
-        return any(ns == namespace and pod.startswith(workload + "-") for ns, pod in resting)
-
+    resting_by_ns: dict[str, list[str]] = {}
+    for ns, pod in resting:
+        resting_by_ns.setdefault(ns, []).append(pod)
     nodes: dict[str, dict] = {}
     for m, v in r["ready"]:
         nodes[m["node"]] = {"n": m["node"], "ok": int(v == 1), "k8s": 1}
     for m, v in r["host_up"]:
         n = names.get(m["instance"], m["instance"])
         nodes[n] = {"n": n, "ok": int(v == 1), "k8s": 0}
-    for n, end in maint.items():  # seconds left, or -1 for no end; a host that's off shows too
-        nodes.setdefault(n, {"n": n, "ok": 0, "k8s": 0})["maint"] = -1 if end == float("inf") else max(0, int(end - now))
+    for n, end in maint.items():  # a host that's off for the work is still listed
+        node = nodes.setdefault(n, {"n": n, "ok": 0, "k8s": 0})
+        node["maint"] = _maint_left(end, now)
     for key in ("cpu", "mem", "disk", "temp"):
         for m, v in r[key]:
             n = names.get(m.get("instance"), m.get("instance"))
@@ -143,11 +160,11 @@ def build(r: dict[str, list[tuple[dict, float]]], now: float) -> dict:
         if m.get("sync_status") != "Synced" or m.get("health_status") != "Healthy"
     ]
 
-    pods = [
-        [f"{m['namespace']}/{m.get('deployment') or m.get('statefulset')}", f"{int(v)} NOT READY"]
-        for m, v in r["unavailable"] + r["unready_sts"]
-        if not on_resting(m["namespace"], m.get("deployment") or m.get("statefulset") or "")
-    ]
+    pods = []
+    for m, v in r["unavailable"] + r["unready_sts"]:
+        workload = m.get("deployment") or m.get("statefulset") or "?"
+        if not _runs_on(resting_by_ns, m["namespace"], workload):
+            pods.append([f"{m['namespace']}/{workload}", f"{int(v)} NOT READY"])
     pods += [[f"{m['namespace']}/{m['pod']}", m["reason"]] for m, _ in r["stuck"]
              if (m["namespace"], m["pod"]) not in resting]
 
@@ -161,8 +178,7 @@ def build(r: dict[str, list[tuple[dict, float]]], now: float) -> dict:
 
     down = sorted(
         m.get("job", "?") for m, _ in r["targets_down"]
-        if names.get(m.get("instance", ""), m.get("instance", "").split(":")[0]) not in maint
-        and (m.get("namespace"), m.get("pod")) not in resting
+        if _host_of(m, names) not in maint and (m.get("namespace"), m.get("pod")) not in resting
     )
     rates = {("dn" if "download" in m.get("entity", "") else "up"): round(v) for m, v in r["rates"]}
     net = {"ok": int(any(v == 1 for _, v in r["wan"])), **rates} if r["wan"] else None
