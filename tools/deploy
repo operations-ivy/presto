@@ -7,6 +7,9 @@
 # can hold the port. Uses a plain `mpremote connect` (it soft-resets first, so
 # no app holds the screen or SD card; `resume` against a running app has
 # stalled the USB serial before). Never touches secrets.py or /examples.
+# Day to day the Presto updates itself over Wi-Fi (device/lib/neon/ota.py,
+# presto#9); this is for main.py and ota_boot.py, which only change here, and
+# for when Wi-Fi updates can't help.
 set -euo pipefail
 
 port=${1:-/dev/ttyACM0}
@@ -28,8 +31,20 @@ while IFS= read -r f; do
     args+=(+ cp "$f" ":/$rel")
 done < <(find "$dev" -type f \( -name '*.py' -o -name '*.yaml' \) | sort)
 
+# Record the version this installs, as a Wi-Fi update would (presto#9): the
+# Presto then doesn't fetch the same files again, and a USB deploy ends any
+# update on trial (and its backups).
+version=$(python3 "$here/presto_photos/device.py" "$dev" | python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])')
+args+=(+ exec "import os, ota_boot
+ota_boot.remove_tree('/ota')  # the first design kept backups on the flash
+ota_boot.write({'version': '$version', 'status': 'ok'})
+if ota_boot.mount_sd():  # a downloaded update waiting there would install over this
+    ota_boot.remove_tree('/sd/ota')
+    os.umount('/sd')
+ota_boot.write({'version': '$version', 'status': 'ok'})")
+
 "$mpr" connect "$port" "${args[@]}"
-echo "deploy: copied; restarting"
+echo "deploy: copied $version; restarting"
 # Leave Wi-Fi cleanly first: reset while still joined, and the router turns the
 # next boot's join away for a while (status -1; 4-8 of 8 boots, against 0 of 8
 # after a disconnect, 2026-11-04, presto#18).

@@ -305,6 +305,7 @@ class Brick(Screen):
             ("  RSSI  %s" % ("%d dBm" % net["rssi"] if net["rssi"] is not None else "--"), uplink.OK),
             ("  RAM   %d KB FREE   SD %s" % (ram, sd), uplink.OK),
             ("  UP    %d MIN" % (time.ticks_ms() // 60000), uplink.OK),
+            ("  CODE  %s %s" % (self.ctx.ota.version or "--", self.ctx.ota.state.get("status", "")), uplink.OK),
         ]
 
     def draw(self, d, now_ms):

@@ -7,6 +7,8 @@ photo_feed: https://presto.brick.nozdormu.cloud  # the upload page; empty: /sd/g
 feed_minutes: 10       # how often to look for new photos
 plasma_url: http://brick9000:8766/  # the back LEDs mirror plasma's builds and deploys; empty: off
 mirror_level: 1.0      # their brightness while mirroring, 0..1
+ota_url: https://presto.brick.nozdormu.cloud/device  # updates over Wi-Fi (presto#9); empty: USB only
+ota_minutes: 10        # how often to look for one
 brick_feed: https://presto.brick.nozdormu.cloud/brick.json  # the Brick screen's uplink (presto-feed); empty: none
 units: imperial        # imperial (F) or metric (C)
 clock_24h: false       # false: 10:47 PM

@@ -226,3 +226,6 @@ TODO.md
 
 # The device's MicroPython library folder is source, not a build output.
 !device/lib/
+
+# The Presto's Wi-Fi, coordinates and signs: on the device only, never in git (README)
+secrets.py

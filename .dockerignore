@@ -3,3 +3,7 @@
 !poetry.lock
 !presto_photos/
 presto_photos/__pycache__/
+!device/
+device/secrets.py
+device/**/secrets.py
+device/**/__pycache__/

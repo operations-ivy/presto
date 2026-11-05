@@ -16,6 +16,7 @@ has no network.
     GET  /master?id=           JPEG ~1600 px (the crop editor's picture)
     GET  /manifest.json        what the Presto shows, in order
     GET  /photo/<id>.jpg|.rgb565  the Presto's files
+    GET  /device/manifest.json, /device/bundle  the Presto's own code (device.py, presto#9)
     GET  /health /ready /metrics
 """
 
@@ -32,6 +33,7 @@ import brick_observe
 from brick_observe import metrics as observe_metrics
 from prometheus_client import Counter
 
+from .device import Release
 from .store import Store, valid_id
 
 log = brick_observe.get_logger(__name__)
@@ -60,12 +62,12 @@ def same_origin(origin: str | None, host: str | None) -> bool:
 SHOWING_FOR_S = 30 * 60  # a report older than this: the Presto isn't on Photos (or is off)
 
 
-def make_handler(store: Store):
+def make_handler(store: Store, release: Release | None = None):
     showing = {}  # what the Presto last said it shows: {"id", "at"} (in memory: one web pod)
 
     class Handler(brick_observe.httpserver.Observed, BaseHTTPRequestHandler):
         routes = {"/", "/api/photos", "/api/upload", "/api/crop", "/api/hide", "/api/delete", "/preview",
-                  "/master", "/manifest.json", "/photo", "/api/showing"}
+                  "/master", "/manifest.json", "/photo", "/api/showing", "/device/manifest.json", "/device/bundle"}
         server_version = "presto-photos"
         protocol_version = "HTTP/1.1"
 
@@ -136,6 +138,12 @@ def make_handler(store: Store):
                                        "pending": len(store.pending_uploads()), "now": now, "showing": on})
             if path == "/manifest.json":
                 return self.file(store.p("manifest.json"), "application/json")
+            if path in ("/device/manifest.json", "/device/bundle"):
+                if release is None:
+                    return self.json(404, {"error": "no device code in this image"})
+                if path == "/device/manifest.json":
+                    return self.json(200, release.manifest())
+                return self.send(200, release.bundle(), "application/octet-stream")
             if path in ("/preview", "/master"):
                 pid = self.query_id()
                 if not pid:
@@ -236,8 +244,8 @@ def make_handler(store: Store):
     return Handler
 
 
-def serve(store: Store, port: int = 8080) -> None:
-    httpd = ThreadingHTTPServer(("", port), make_handler(store))
+def serve(store: Store, port: int = 8080, release: Release | None = None) -> None:
+    httpd = ThreadingHTTPServer(("", port), make_handler(store, release))
     httpd.daemon_threads = True
     log.info("web listening", port=port)
     httpd.serve_forever()
