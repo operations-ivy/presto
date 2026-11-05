@@ -553,3 +553,18 @@ def test_glyph_rain_draws_n_drops_each_with_its_trail_and_respawns_above():
             assert tc in fx.GLYPHS and gc in fx.GLYPHS
             assert (tx, ty + 9) == (gx, gy) and tpen == gpen + "-trail"  # one line behind, darker
             assert 0 <= gx <= fx.W - 6 and gy <= 226
+
+
+def test_sync_survives_a_card_error(monkeypatch):
+    """2026-11-05: OSError 5 (EIO) writing the manifest to the card crashed the app."""
+    feed = photosync.Feed("")  # no url: nothing touches the card here
+    feed.ready = True
+
+    def eio(_last_touch_ms):
+        raise OSError(5)
+
+    monkeypatch.setattr(feed, "_step", eio)
+    monkeypatch.setattr(photosync.time, "ticks_ms", lambda: 0, raising=False)  # MicroPython's
+    monkeypatch.setattr(photosync.time, "ticks_add", lambda a, b: a + b, raising=False)
+    assert feed.step(types.SimpleNamespace(up=True), -10**6) is False
+    assert feed.queue == [] and feed.dl is None
