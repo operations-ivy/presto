@@ -5,7 +5,7 @@ import time
 from neon import conf, fx, nav, services, theme
 
 DEFAULTS = {
-    "idle_seconds": 300,  # no touch for this long: go to idle_screen
+    "idle_seconds": 14400,  # 4 h with no touch: go to idle_screen
     "idle_screen": "photos",
     "photo_seconds": 300,  # a new photo every 5 minutes
     "units": "imperial",
