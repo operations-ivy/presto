@@ -429,3 +429,38 @@ def test_mirror_url_and_colours():
 
 def test_plasma_url_setting():
     assert conf.load("device/settings.yaml", {})["plasma_url"] == "http://brick9000:8766/"
+
+
+# --- Home's rare sightings ---------------------------------------------------
+from neon import sightings  # noqa: E402
+
+
+def test_sightings_gap_is_the_average_give_or_take_half():
+    assert sightings.next_gap_ms(15, 0.0) == 450000 and sightings.next_gap_ms(15, 1.0) == 1350000
+    assert sightings.next_gap_ms(15, 0.5) == 900000
+
+
+def test_sightings_never_the_same_twice_running():
+    for last in sightings.KINDS:
+        for r in (0.0, 0.3, 0.6, 0.999, 1.0):
+            k = sightings.pick(last, r)
+            assert k in sightings.KINDS and k != last
+    assert {sightings.pick(None, r / 10) for r in range(10)} == set(sightings.KINDS)
+
+
+def test_sightings_ease():
+    assert sightings.ease(0) == 0 and sightings.ease(1) == 1 and abs(sightings.ease(0.5) - 0.5) < 1e-9
+    assert sightings.ease(-1) == 0 and sightings.ease(2) == 1
+
+
+def test_sky_signal_emblem_from_secrets_or_ours():
+    import types
+
+    mine = ("..K..", ".KKK.", "KKKKK")
+    assert sightings.emblem_art(types.SimpleNamespace(EMBLEM=mine)) == mine
+    assert sightings.emblem_art(types.SimpleNamespace()) == sprites.EMBLEM
+    assert sightings.emblem_art(None) == sprites.EMBLEM
+    assert sightings.emblem_art(types.SimpleNamespace(EMBLEM=7)) == sprites.EMBLEM  # not a grid
+    assert sightings.emblem_art(types.SimpleNamespace(EMBLEM=("K" * 99,))) == sprites.EMBLEM  # too wide
+    assert sightings.emblem_scale(12, 7) == 3 and sightings.emblem_scale(30, 12) == 2
+    assert sightings.emblem_scale(30, 20) == 1

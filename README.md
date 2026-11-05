@@ -66,7 +66,9 @@ art in `device/lib/neon/sprites.py`, like brick-status's `tools/pixel_art.py`).
 - `secrets.py` (on the Presto only, never in git): `WIFI_SSID`,
   `WIFI_PASSWORD`, for the forecast `LATITUDE` / `LONGITUDE`, and `SIGNS`: up
   to four names for Home's neon tower signs (default `("BRICK",)`), kept off
-  this public repo on purpose. The forecast
+  this public repo on purpose; optionally `EMBLEM`, the sky signal's emblem on
+  Home (a letter grid like `sprites.EMBLEM`: `K` dark, `.` the light; up to 30
+  wide, 20 tall), for a logo that isn't ours to publish. The forecast
   is [Open-Meteo](https://open-meteo.com) (no key); its UTC offset also sets
   the clock, with `utc_offset` + `dst` in settings as the fallback.
 - Pimoroni's examples and menu are kept in `/examples` on the flash; move them

@@ -157,3 +157,57 @@ FOG = (
     "..............",
     "LLLL..LLLLLLLL",
 )
+
+# --- Home's rare sightings (sightings.py). Our own designs, nobody's character. ---
+
+KAIJU = (  # a giant lizard of our own, facing left: glowing dorsal spines, red eye, open jaw
+    ".............C......",
+    "............CC..C...",
+    "......KKKK..CMC.CC..",
+    ".....KMMMMKKCMMCMC..",
+    "....KMRMMMMMKMMMMKC.",
+    "...KMMMMMMMMMMMMMMKC",
+    "..KMMMKKKMMMMMMMMMMK",
+    "..KMMK...KMMMMMMMMMK",
+    "...KMK..KMMMMMMMMMMK",
+    "....KKKKMMMMLLMMMMMK",
+    "......KMMMMLLLLMMMMK",
+    ".....KMKMMLLLLLMMMMK",
+    "....KMK.KMLLLLLMMMMK",
+    "....KK..KMMLLLLMMMMMK",
+    "........KMMMLLMMMMMMK",
+    "........KMMMMMMMMMMMMK",
+    ".......KMMMKKKKMMMMMMMK",
+    "......KMMMK....KMMMMMMMK",
+    "......KMMK......KMMKKMMMK",
+    ".....KMMMK......KMMK.KKMK",
+)
+
+UFO = (  # a saucer: a lit dome, a rim of running lights (A, swapped to blink)
+    ".....CCCC.....",
+    "....CWWWWC....",
+    "..KKKKKKKKKK..",
+    ".KMMMMMMMMMMK.",
+    "KAMMAMMAMMAMMK",
+    ".KKKKKKKKKKKK.",
+)
+
+EMBLEM = (  # the homelab's own sky signal: a brick
+    "KKKKKKKKKKKK",
+    "KKK.KKKKK.KK",
+    "KKKKKKKKKKKK",
+    "K.KKKKK.KKKK",
+    "KKKKKKKKKKKK",
+    "KKK.KKKKK.KK",
+    "KKKKKKKKKKKK",
+)
+
+FIREBALL = (  # the kaiju's blue fireball, flying left: a white-hot core, a flame trail (L)
+    "..BBBB.....",
+    ".BCCCCBB.L.",
+    "BCCWWWCCBLL",
+    "BCWWWWWCBBL",
+    "BCCWWWCCBLL",
+    ".BCCCCBB.L.",
+    "..BBBB.....",
+)
