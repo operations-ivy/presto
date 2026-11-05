@@ -266,12 +266,12 @@ class Home:
             date = tz.date_line(lt)
         else:
             s, date = "--:--", "SYNCING TIME" if ctx.net.up else "NO SIGNAL"
-        scale = 5
+        scale = 6  # 48 px tall (was 5): bigger, still clear of the top arrow and the forecast
         x = (W - d.measure_text(s, scale) - (26 if ampm else 0)) // 2
-        y = 30
+        y = 26
         if ampm:
             d.set_pen(p.magenta)
-            d.text(ampm, x + d.measure_text(s, scale) + 4, y + 24, W, 2)
+            d.text(ampm, x + d.measure_text(s, scale) + 4, y + 8 * scale - 16, W, 2)  # on the digits' baseline
         since = time.ticks_diff(now_ms, self.entered_at)
         # a neon tube striking for the first second, then a faint hum
         if since < 1100:
@@ -284,7 +284,7 @@ class Home:
                 self.glitch_at = time.ticks_add(now_ms, random.randint(18000, 32000))
         else:
             fx.neon_text(d, p, s, x, y, scale, p.cyan, p.cyan_glow, flicker)
-        fx.centered(d, date, y + 48, 2, p.amber)
+        fx.centered(d, date, y + 8 * scale + 6, 2, p.amber)  # 80..96, above the forecast at 102
 
     def _forecast(self, d, p):
         ctx = self.ctx
