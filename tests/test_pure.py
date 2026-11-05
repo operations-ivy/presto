@@ -281,3 +281,29 @@ def test_backoff_across_the_ticks_wrap():
     assert not b.step(False, top)
     assert not b.step(False, 10000)  # 15 s later, across the wrap: still in the grace
     assert b.step(False, 15001) and b.down_ms(15001) == 20001
+
+
+# --- Home's arrows (presto#11) --------------------------------------------
+def test_turn_points_each_way():
+    up = (".A.", "ABA")
+    assert sprites.turn(up, "up") == up
+    assert sprites.turn(up, "down") == ("ABA", ".A.")
+    assert sprites.turn(up, "left") == (".A", "AB", ".A")
+    assert sprites.turn(up, "right") == ("A.", "BA", "A.")
+
+
+def test_arrow_is_symmetric():
+    for row in sprites.ARROW:
+        assert row == row[::-1]
+
+
+def test_arrows_sit_in_their_tap_bands():
+    from neon import home
+
+    s = home.ARROW_SCALE
+    for way, (x, y) in home.ARROW_AT.items():
+        w, h = sprites.size(sprites.turn(sprites.ARROW, way))
+        x1, y1 = x + w * s - 1, y + h * s - 1
+        assert 0 <= x and x1 < 240 and 0 <= y and y1 < 240, way
+        # both corners tap through to the arrow's own arm, so all of it does
+        assert nav.zone(x, y) == way and nav.zone(x1, y1) == way, way

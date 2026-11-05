@@ -23,6 +23,16 @@ def runs(grid):
     return out
 
 
+def turn(grid, way):
+    """An up-pointing grid turned to point "up", "down", "left" or "right"."""
+    if way == "up":
+        return tuple(grid)
+    if way == "down":
+        return tuple(reversed(grid))
+    cols = tuple("".join(row[x] for row in grid) for x in range(len(grid[0])))  # transpose: apex left
+    return cols if way == "left" else tuple("".join(reversed(c)) for c in cols)  # MicroPython: no [::-1]
+
+
 def size(grid):
     return max(len(r) for r in grid), len(grid)
 
@@ -47,7 +57,7 @@ class Sprite:
 # --- The art ------------------------------------------------------------
 # Letters map to theme.PALETTE. C cyan, P magenta, A amber, O dust orange,
 # G phosphor green, W white, K outline/dark, M mid grey-blue, L light grey-blue,
-# R red light, Y yellow, B blue.
+# R red light, Y yellow, B blue, g phosphor glow.
 
 SPINNER = (  # our own flying car: wedge body, cockpit glow, tail and nose lights
     "......KKKKKK......",
@@ -56,6 +66,19 @@ SPINNER = (  # our own flying car: wedge body, cockpit glow, tail and nose light
     "AKMMMMMMMMMMMMMMMK",
     "..KKKKMMMMMMKKKK..",
     "....P........P....",
+)
+
+ARROW = (  # Home's arms (presto#11): a chevron, highlit on its upper edge, outlined, in a glow ring
+    ".......g.......",
+    "......gKg......",
+    ".....gKWKg.....",
+    "....gKWGWKg....",
+    "...gKWGGGWKg...",
+    "..gKWGGKGGWKg..",
+    ".gKWGGKgKGGWKg.",
+    "gKWGGKg.gKGGWKg",
+    ".gKKKg...gKKKg.",
+    "..ggg.....ggg..",
 )
 
 SUN = (

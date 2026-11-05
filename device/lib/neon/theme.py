@@ -35,6 +35,7 @@ LETTERS = {
     "R": "red",
     "Y": "amber",
     "B": "violet",
+    "g": "phosphor_dim",
 }
 
 

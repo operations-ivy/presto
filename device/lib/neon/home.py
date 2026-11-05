@@ -9,6 +9,14 @@ from neon import fx, sprites, theme, tz, wx
 W = H = 240  # the Presto at its native speed: 240x240, doubled to the 480 panel
 SKY_BOTTOM = 165
 GROUND = 226
+ARROW_SCALE = 2
+_AW, _AH = 15 * ARROW_SCALE, 10 * ARROW_SCALE  # sprites.ARROW pointing up: 30x20
+ARROW_AT = {  # top-left corners; left and right sit below the forecast
+    "up": ((W - _AW) // 2, 1),
+    "down": ((W - _AW) // 2, H - 1 - _AH),
+    "left": (1, 152 - _AW // 2),
+    "right": (W - 1 - _AH, 152 - _AW // 2),
+}
 
 
 class Home:
@@ -61,6 +69,18 @@ class Home:
             "bolt": sprites.Sprite(sprites.BOLT),
             "fog": sprites.Sprite(sprites.FOG),
         }
+        self.arrows = {way: sprites.Sprite(sprites.turn(sprites.ARROW, way)) for way in ARROW_AT}
+        night, green = theme.PALETTE["night"], theme.PALETTE["phosphor"]
+        glow, light = theme.PALETTE["phosphor_dim"], theme.mix(green, (255, 255, 255), 0.6)
+        self.arrow_pens = [  # 16 shades of the breath; the outline stays dark so it reads over the city
+            {
+                "K": p.night,
+                "G": p.rgb(*theme.mix(night, green, t / 15)),
+                "W": p.rgb(*theme.mix(night, light, t / 15)),
+                "g": p.rgb(*theme.mix(night, glow, t / 15)),
+            }
+            for t in range(16)
+        ]
         self.sky_day = [p.rgb(*theme.mix(theme.PALETTE["dust_dark"], theme.PALETTE["dust"], i / 7)) for i in range(8)]
         self.sky_night = [p.rgb(*theme.mix(theme.PALETTE["night"], (30, 14, 52), i / 7)) for i in range(8)]
         self.building_pen = p.rgb(10, 8, 20)
@@ -301,30 +321,9 @@ class Home:
             d.text("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), tx, y + 30, 158, 1)
 
     def _arms(self, d, p, now_ms):
-        # the app names, plain; the arrows fade slowly green <-> black (a ~3 s breath)
+        # no app names (presto#11): just the four chevrons, fading slowly green <-> black
+        # (a ~3 s breath). Each sits inside its edge's tap band (nav.EDGE).
         level = (1 + math.sin(now_ms / 480)) / 2
-        step = int(level * 15)  # 16 shades, so only 16 pens are ever made
-        chev = p.rgb(*theme.mix(theme.PALETTE["night"], theme.PALETTE["phosphor"], step / 15))
-        arms = self.ctx.arms
-        labels = self.ctx.labels
-
-        def name(s, x, y):  # tap anywhere in that edge's band to open the app
-            d.set_pen(p.night)
-            d.text(s, x + 1, y + 1, W, 1)  # a shadow, so it reads over the skyline
-            d.set_pen(p.text)
-            d.text(s, x, y, W, 1)
-
-        up = labels[arms["up"]]
-        d.set_pen(chev)
-        d.text("^", (W - 6) // 2, 2, W, 1)
-        name(up, (W - d.measure_text(up, 1)) // 2, 11)
-        dn = labels[arms["down"]]
-        name(dn, (W - d.measure_text(dn, 1)) // 2, 219)
-        d.set_pen(chev)
-        d.text("v", (W - 6) // 2, 230, W, 1)
-        d.text("<", 2, 144, W, 2)
-        name(labels[arms["left"]], 14, 147)
-        rt = labels[arms["right"]]
-        name(rt, W - 15 - d.measure_text(rt, 1), 147)
-        d.set_pen(chev)
-        d.text(">", W - 12, 144, W, 2)
+        pens = self.arrow_pens[int(level * 15)]
+        for way, (x, y) in ARROW_AT.items():
+            self.arrows[way].draw(d, pens, x, y, ARROW_SCALE)
