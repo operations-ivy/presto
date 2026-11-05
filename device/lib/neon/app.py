@@ -10,6 +10,7 @@ DEFAULTS = {
     "photo_seconds": 300,  # a new photo every 5 minutes
     "units": "imperial",
     "clock_24h": False,
+    "home_sky": "night",  # Home's sky: night always, or "daylight" (2049 haze from sunrise to sunset)
     "home_align": "left",  # Home's clock, date and forecast: left (room for the sightings) or center
     "sighting_minutes": 15,  # left-aligned Home: a rare sighting this often, on average; 0: none
     "utc_offset": -5,  # standard time, hours (the forecast's own offset wins once it's fetched)
