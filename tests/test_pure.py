@@ -400,3 +400,15 @@ def test_sightings_never_the_same_twice_running():
 def test_sightings_ease():
     assert sightings.ease(0) == 0 and sightings.ease(1) == 1 and abs(sightings.ease(0.5) - 0.5) < 1e-9
     assert sightings.ease(-1) == 0 and sightings.ease(2) == 1
+
+
+def test_sky_signal_emblem_from_secrets_or_ours():
+    import types
+
+    mine = ("..K..", ".KKK.", "KKKKK")
+    assert sightings.emblem_art(types.SimpleNamespace(EMBLEM=mine)) == mine
+    assert sightings.emblem_art(types.SimpleNamespace()) == sprites.EMBLEM
+    assert sightings.emblem_art(None) == sprites.EMBLEM
+    assert sightings.emblem_art(types.SimpleNamespace(EMBLEM=7)) == sprites.EMBLEM  # not a grid
+    assert sightings.emblem_art(types.SimpleNamespace(EMBLEM=("K" * 99,))) == sprites.EMBLEM  # too wide
+    assert sightings.emblem_scale(12, 7) == 3 and sightings.emblem_scale(28, 12) == 1

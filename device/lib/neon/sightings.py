@@ -31,6 +31,22 @@ def pick(last, r):
     return choices[min(len(choices) - 1, int(r * len(choices)))]
 
 
+def emblem_art(secrets):
+    """The sky signal's emblem: secrets.EMBLEM if it's a usable letter grid (on the Presto
+    only, never in git: a logo that isn't ours stays off the public repo), else our brick."""
+    art = getattr(secrets, "EMBLEM", None)
+    try:
+        ok = 0 < len(art) <= 20 and all(isinstance(r, str) and 0 < len(r) <= 30 for r in art)
+    except TypeError:
+        ok = False
+    return tuple(art) if ok else sprites.EMBLEM
+
+
+def emblem_scale(w, h):
+    """As big as fits in the spotlight (~44 x 30 px), up to 3."""
+    return max(1, min(3, 44 // w, 30 // h))
+
+
 def ease(t):
     """0..1 -> 0..1, slow at both ends."""
     return 0.5 - 0.5 * math.cos(math.pi * max(0.0, min(1.0, t)))
@@ -45,7 +61,8 @@ class Sightings:
         self.next_at = time.ticks_add(time.ticks_ms(), next_gap_ms(minutes, random.random()))
         self.kaiju = sprites.Sprite(sprites.KAIJU)
         self.ufo = sprites.Sprite(sprites.UFO)
-        self.emblem = sprites.Sprite(sprites.EMBLEM)
+        self.emblem = sprites.Sprite(emblem_art(getattr(ctx, "secrets", None)))
+        self.emblem_scale = emblem_scale(self.emblem.w, self.emblem.h)
         self.sparks = []  # fireworks: [x, y, dx, dy, life, pen]
         self.rockets = []  # [x, y, dy, burst_y, pen]
         p = ctx.pens
@@ -126,7 +143,8 @@ class Sightings:
         d.line(sx, sy, cx, cy + 6)
         d.set_pen(self.spot)
         d.circle(cx, cy, 24)
-        self.emblem.draw(d, self.ctx.pens.letters, cx - 18, cy - 10, 3)
+        k = self.emblem_scale
+        self.emblem.draw(d, self.ctx.pens.letters, cx - self.emblem.w * k // 2, cy - self.emblem.h * k // 2, k)
 
     def _fireworks(self, d, now_ms, t, layer):
         """Rockets from behind the city; each bursts into a falling ring of sparks."""
