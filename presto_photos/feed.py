@@ -5,7 +5,7 @@ outside it, Argo CD, the front door and Home Assistant (whose sensors it reads
 as the Monitoring user), so this pod holds no token at all. Every REFRESH_S it
 asks Prometheus a handful of queries and keeps the answer; the Presto polls
 
-    GET /brick.json   {"at", "age", "nodes", "apps", "pods", "door", "temps"}
+    GET /brick.json   {"at", "age", "nodes", "apps", "pods", "jobs", "door", "net", "scrape", "temps"}
     GET /health /ready /metrics
 
 The Presto is a microcontroller: the JSON stays small (short keys, whole
@@ -47,6 +47,20 @@ QUERIES = {
     "cpu": f'100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{{{NODE_JOBS},mode="idle"}}[2m])))',
     "mem": f"100 * (1 - node_memory_MemAvailable_bytes{{{NODE_JOBS}}} / node_memory_MemTotal_bytes{{{NODE_JOBS}}})",
     "temp": f"max by (instance) (node_thermal_zone_temp{{{NODE_JOBS}}})",
+    "disk": f'100 * (1 - node_filesystem_avail_bytes{{{NODE_JOBS},mountpoint="/"}}'
+            f' / node_filesystem_size_bytes{{{NODE_JOBS},mountpoint="/"}})',
+    "running": 'sum(kube_pod_status_phase{phase="Running"})',
+    "restarts": "sum(increase(kube_pod_container_status_restarts_total[1h]))",
+    # Jenkins: each job's last result (0 SUCCESS, 1 UNSTABLE, 2 FAILURE, 3 NOT_BUILT, 4 ABORTED)
+    "jobs": "max by (jenkins_job) (default_jenkins_builds_last_build_result_ordinal)",
+    "job_start": "max by (jenkins_job) (default_jenkins_builds_last_build_start_time_milliseconds)",
+    "targets": "count(up)",
+    # a finished Job's pod is done, not down (as brick9000's board counts it)
+    "targets_down": 'up == 0 unless on (namespace, pod) (kube_pod_status_phase{phase=~"Succeeded|Failed"} == 1)',
+    "door_rpm": "sum(rate(caddy_http_request_duration_seconds_count[10m])) * 60",
+    # the internet, from Home Assistant's router integration (UPnP): link state and the house's rates
+    "wan": 'hass_binary_sensor_state{entity=~".*_wan_status"}',
+    "rates": 'hass_sensor_data_rate_kib_per_s{entity=~".*_(download|upload)_speed"}',
     "apps": "argocd_app_info",
     "stuck": "sum by (namespace, pod, reason) (kube_pod_container_status_waiting_reason"
     '{reason=~"CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerConfigError"}) > 0',
@@ -82,6 +96,13 @@ def _order(name: str):
     return (len(name), name)
 
 
+JENKINS_RESULTS = {1: "UNSTABLE", 2: "FAILED", 4: "ABORTED"}
+
+
+def _total(rows) -> int:
+    return round(sum(v for _, v in rows))
+
+
 def sensor_name(friendly: str) -> str:
     """'My ecobee Current Temperature' -> 'My ecobee'; 'Bedroom temperature' -> 'Bedroom'."""
     s = re.sub(r"\s*(current\s+)?temperature\s*$", "", friendly, flags=re.I).strip()
@@ -97,7 +118,7 @@ def build(r: dict[str, list[tuple[dict, float]]], now: float) -> dict:
     for m, v in r["host_up"]:
         n = names.get(m["instance"], m["instance"])
         nodes[n] = {"n": n, "ok": int(v == 1), "k8s": 0}
-    for key in ("cpu", "mem", "temp"):
+    for key in ("cpu", "mem", "disk", "temp"):
         for m, v in r[key]:
             n = names.get(m.get("instance"), m.get("instance"))
             if n in nodes:
@@ -119,6 +140,15 @@ def build(r: dict[str, list[tuple[dict, float]]], now: float) -> dict:
     door_up = any(v == 1 for _, v in r["door_up"])
     errors = round(sum(v for _, v in r["door_5xx"]))
 
+    results = {m.get("jenkins_job", "?"): int(v) for m, v in r["jobs"]}
+    bad_jobs = sorted([j, JENKINS_RESULTS.get(n, "?")] for j, n in results.items() if n in (1, 2, 4))
+    starts = sorted(((v, m.get("jenkins_job", "?")) for m, v in r["job_start"]), reverse=True)
+    last = [starts[0][1], max(0, int(now - starts[0][0] / 1000))] if starts else None
+
+    down = sorted(f"{m.get('job', '?')}" for m, _ in r["targets_down"])
+    rates = {("dn" if "download" in m.get("entity", "") else "up"): round(v) for m, v in r["rates"]}
+    net = {"ok": int(any(v == 1 for _, v in r["wan"])), **rates} if r["wan"] else None
+
     temps = sorted(
         (
             {"n": sensor_name(m.get("friendly_name") or m.get("entity", "?")), "c": round(v, 1)}
@@ -131,8 +161,12 @@ def build(r: dict[str, list[tuple[dict, float]]], now: float) -> dict:
         "at": int(now),
         "nodes": sorted(nodes.values(), key=lambda n: _order(n["n"])),
         "apps": {"n": len(apps), "bad": bad_apps[:MAX_ROWS], "nbad": len(bad_apps)},
-        "pods": {"bad": pods[:MAX_ROWS], "nbad": len(pods)},
-        "door": {"ok": int(door_up), "e5xx": errors},
+        "pods": {"bad": pods[:MAX_ROWS], "nbad": len(pods), "run": _total(r["running"]),
+                 "rs": _total(r["restarts"])},
+        "jobs": {"n": len(results), "bad": bad_jobs[:MAX_ROWS], "nbad": len(bad_jobs), "last": last},
+        "door": {"ok": int(door_up), "e5xx": errors, "rpm": _total(r["door_rpm"])},
+        "net": net,
+        "scrape": {"n": _total(r["targets"]), "down": down[:MAX_ROWS], "ndown": len(down)},
         "temps": temps,
     }
 

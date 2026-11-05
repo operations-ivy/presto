@@ -1,7 +1,7 @@
 """The Brick screen's uplink: presto-feed's JSON (presto#5) as two pages of lines.
 
-CLUSTER: each brick (ready, CPU, memory, temperature), Argo CD, the pods, the
-front door. ROOMS: every indoor temperature Home Assistant has online, plus the
+CLUSTER: each brick (ready, CPU, memory, disk, temperature), the pods, Argo CD,
+Jenkins, the front door, the internet and Prometheus' scrapes. ROOMS: every indoor temperature Home Assistant has online, plus the
 Presto's own sensor, and this node. Passive only: a problem shows as a red line
 and a stuttering column, never a sound or a takeover.
 
@@ -35,37 +35,113 @@ def _short(s, n):
     return s if len(s) <= n else s[: n - 1] + "~"
 
 
-def cluster(data):
+ROWS = 17  # the Brick panel's lines
+
+
+def _n(x):
+    """A count in at most 4 characters: 216, 9999, 12K, 1.2M."""
+    x = int(x)
+    return "%d" % x if x < 10000 else "%dK" % (x // 1000) if x < 1000000 else "%.1fM" % (x / 1000000)
+
+
+def _ago(s):
+    return "%dS" % s if s < 60 else "%dM" % (s // 60) if s < 3600 else "%dH" % (s // 3600) if s < 172800 else "%dD" % (s // 86400)
+
+
+def _pct(n, key):
+    return "%3d%%" % n[key] if key in n else "  --"
+
+
+def _rate(kib):
+    return "%dK" % kib if kib < 1024 else "%.1fM" % (kib / 1024) if kib < 10240 else "%dM" % (kib // 1024)
+
+
+def cluster(data, rows=ROWS):
+    """The CLUSTER page: always the summaries, and as many problem lines as fit."""
     if data is None:
         return [("> UPLINK", H), ("  NO FEED YET", BAD)]
-    out = [("> NODES      CPU MEM TEMP", H)]
+    # fewer problem lines until it fits: the "+N MORE" lines, then Jenkins' LAST line go first
+    for cap, more, last in ((4, 1, 1), (3, 1, 1), (2, 1, 1), (1, 1, 1), (1, 0, 1), (1, 0, 0), (0, 0, 0)):
+        out = _cluster(data, cap, more, last)
+        if len(out) <= rows:
+            return out
+    return out[:rows]
+
+
+def _more(out, shown, total, more):
+    if more and total > shown:
+        out.append(("  +%d MORE" % (total - shown), BAD))
+
+
+def _cluster(data, cap, more=1, last=1):
+    out = [("> NODES     CPU MEM DSK TEMP", H)]
     for n in data.get("nodes", []):
         if not n.get("ok"):
             out.append(("  %-9s  %s" % (_short(n["n"], 9), "NOT READY" if n.get("k8s") else "DOWN"), BAD))
             continue
-        cpu = "%3d%%" % n["cpu"] if "cpu" in n else "  --"
-        mem = "%3d%%" % n["mem"] if "mem" in n else "  --"
         temp = "%3dC" % n["temp"] if "temp" in n else "  --"
-        out.append(("  %-9s %s%s %s" % (_short(n["n"], 9), cpu, mem, temp), OK))
+        out.append(("  %-9s%s%s%s %s" % (_short(n["n"], 9), _pct(n, "cpu"), _pct(n, "mem"), _pct(n, "disk"), temp), OK))
+
+    pods = data.get("pods", {})
+    rs = pods.get("rs", 0)
+    line = "> PODS  %s RUNNING" % _n(pods.get("run", 0))
+    if pods.get("nbad"):
+        line += "  %s BAD" % _n(pods["nbad"])
+    elif rs:
+        line += "  %s RST/H" % _n(rs)
+    out.append((line, BAD if pods.get("nbad") or rs else H))
+    bad = pods.get("bad", [])[:cap]
+    for name, why in bad:
+        out.append(("  %-19s %s" % (_short(name, 19), _short(REASONS.get(why, why), 9)), BAD))
+    if cap:
+        _more(out, len(bad), pods.get("nbad", 0), more)
+
     apps = data.get("apps", {})
     nbad = apps.get("nbad", 0)
-    out.append(("> ARGO  %d/%d SYNCED" % (apps.get("n", 0) - nbad, apps.get("n", 0)), H if not nbad else BAD))
-    for name, sync, health in apps.get("bad", []):
-        what = sync if sync != "Synced" else health
-        out.append(("  %-13s %s" % (_short(name, 13), _short(what, 11)), BAD))
-    pods = data.get("pods", {})
-    if pods.get("nbad"):
-        out.append(("> PODS  %d NOT RIGHT" % pods["nbad"], BAD))
-        for name, why in pods.get("bad", []):
-            out.append(("  %-19s %s" % (_short(name, 19), _short(REASONS.get(why, why), 9)), BAD))
-    else:
-        out.append(("> PODS  ALL READY", H))
+    out.append(("> ARGO  %d/%d SYNCED" % (apps.get("n", 0) - nbad, apps.get("n", 0)), BAD if nbad else H))
+    bad = apps.get("bad", [])[:cap]
+    for name, sync, health in bad:
+        out.append(("  %-17s %s" % (_short(name, 17), _short(sync if sync != "Synced" else health, 11)), BAD))
+    if cap:
+        _more(out, len(bad), nbad, more)
+
+    jobs = data.get("jobs")
+    if jobs:
+        nbad = jobs.get("nbad", 0)
+        out.append(("> JENKINS  %d/%d PASSING" % (jobs.get("n", 0) - nbad, jobs.get("n", 0)), BAD if nbad else H))
+        bad = jobs.get("bad", [])[:cap]
+        for name, result in bad:
+            out.append(("  %-19s %s" % (_short(name, 19), result), BAD))
+        if cap:
+            _more(out, len(bad), nbad, more)
+        if jobs.get("last") and last:
+            name, ago = jobs["last"]
+            out.append(("  LAST %-17s %s AGO" % (_short(name, 17), _ago(ago + data.get("age", 0))), OK))
+
     door = data.get("door", {})
     if door.get("ok"):
         e = door.get("e5xx", 0)
-        out.append(("> DOOR  UP" + ("  %d ERR/10M" % e if e else ""), H if not e else BAD))
+        line = "> DOOR  UP  %s REQ/M" % _n(door.get("rpm", 0)) + ("  %s 5XX" % _n(e) if e else "")
+        out.append((line, BAD if e else H))
     else:
         out.append(("> DOOR  DOWN", BAD))
+
+    net = data.get("net")
+    if net is not None:
+        if net.get("ok"):
+            out.append(("> NET   DN %sB/S  UP %sB/S" % (_rate(net.get("dn", 0)), _rate(net.get("up", 0))), H))
+        else:
+            out.append(("> NET   INTERNET DOWN", BAD))
+
+    sc = data.get("scrape")
+    if sc:
+        nd = sc.get("ndown", 0)
+        out.append(("> SCRAPE  %d/%d UP" % (sc.get("n", 0) - nd, sc.get("n", 0)), BAD if nd else H))
+        if cap:
+            down = sc.get("down", [])[:cap]
+            for job in down:
+                out.append(("  %s" % _short(job, 30), BAD))
+            _more(out, len(down), nd, more)
     return out
 
 
@@ -82,7 +158,8 @@ def rooms(data, fahrenheit, own_temp=None):
 
 
 def health(data):
-    """One flag per check, for the rain's columns: nodes, then Argo, pods, the door."""
+    """One flag per check, for the rain's columns: nodes, then Argo, pods, the door, Jenkins,
+    the internet and the scrapes."""
     if data is None:
         return []
     flags = [bool(n.get("ok")) for n in data.get("nodes", [])]
@@ -90,6 +167,12 @@ def health(data):
     flags.append(not data.get("pods", {}).get("nbad"))
     door = data.get("door", {})
     flags.append(bool(door.get("ok")) and not door.get("e5xx"))
+    if data.get("jobs"):
+        flags.append(not data["jobs"].get("nbad"))
+    if data.get("net") is not None:
+        flags.append(bool(data["net"].get("ok")))
+    if data.get("scrape"):
+        flags.append(not data["scrape"].get("ndown"))
     return flags
 
 

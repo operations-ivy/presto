@@ -314,12 +314,15 @@ from neon import uplink  # noqa: E402
 
 FEED = {
     "at": 1, "age": 5,
-    "nodes": [{"n": "brick420", "ok": 1, "k8s": 1, "cpu": 3, "mem": 23, "temp": 47},
+    "nodes": [{"n": "brick420", "ok": 1, "k8s": 1, "cpu": 3, "mem": 23, "disk": 46, "temp": 47},
               {"n": "brick666", "ok": 0, "k8s": 1},
               {"n": "brick9000", "ok": 0, "k8s": 0}],
     "apps": {"n": 21, "bad": [["chucks-wisdom", "OutOfSync", "Healthy"]], "nbad": 1},
-    "pods": {"bad": [["chuck/reader-abc", "CrashLoopBackOff"]], "nbad": 1},
-    "door": {"ok": 1, "e5xx": 0},
+    "pods": {"bad": [["chuck/reader-abc", "CrashLoopBackOff"]], "nbad": 1, "run": 54, "rs": 0},
+    "door": {"ok": 1, "e5xx": 0, "rpm": 216},
+    "jobs": {"n": 16, "bad": [], "nbad": 0, "last": ["build-branches", 175]},
+    "net": {"ok": 1, "dn": 6, "up": 1536},
+    "scrape": {"n": 56, "down": [], "ndown": 0},
     "temps": [{"n": "Bedroom", "c": 24.6}, {"n": "My ecobee", "c": 22.2}],
 }
 
@@ -327,23 +330,37 @@ FEED = {
 def test_uplink_cluster_page():
     lines = uplink.cluster(FEED)
     text = [t for t, _ in lines]
-    assert text[1] == "  BRICK420    3% 23%  47C"
+    assert text[0] == "> NODES     CPU MEM DSK TEMP"
+    assert text[1] == "  BRICK420   3% 23% 46%  47C"
     assert ("  BRICK666   NOT READY", uplink.BAD) in lines
     assert ("  BRICK9000  DOWN", uplink.BAD) in lines
-    assert ("> ARGO  20/21 SYNCED", uplink.BAD) in lines
+    assert ("> PODS  54 RUNNING  1 BAD", uplink.BAD) in lines  # one pod crash-looping
     assert ("  CHUCK/READER-ABC    CRASHLOOP", uplink.BAD) in lines
-    assert ("> DOOR  UP", uplink.H) in lines
+    assert ("> ARGO  20/21 SYNCED", uplink.BAD) in lines
+    assert ("> JENKINS  16/16 PASSING", uplink.H) in lines
+    assert ("  LAST BUILD-BRANCHES    3M AGO", uplink.OK) in lines
+    assert ("> DOOR  UP  216 REQ/M", uplink.H) in lines
+    assert ("> NET   DN 6KB/S  UP 1.5MB/S", uplink.H) in lines
+    assert ("> SCRAPE  56/56 UP", uplink.H) in lines
 
 
 def test_uplink_lines_fit_the_panel():
     worst = dict(FEED)
-    worst["nodes"] = [{"n": "brick%d" % i, "ok": 1, "k8s": 1, "cpu": 100, "mem": 100, "temp": 100} for i in range(5)]
+    worst["nodes"] = [{"n": "brick%d" % i, "ok": 1, "k8s": 1, "cpu": 100, "mem": 100, "disk": 100, "temp": 100}
+                      for i in range(5)]
+    worst["pods"] = {"bad": [["namespace/a-very-long-pod-name", "CreateContainerConfigError"]] * 4, "nbad": 9,
+                     "run": 999, "rs": 999}
     worst["apps"] = {"n": 30, "bad": [["a-very-long-application-name", "OutOfSync", "Degraded"]] * 4, "nbad": 9}
-    worst["pods"] = {"bad": [["namespace/a-very-long-pod-name", "CreateContainerConfigError"]] * 4, "nbad": 9}
-    worst["door"] = {"ok": 1, "e5xx": 12345}
+    worst["jobs"] = {"n": 16, "bad": [["a-very-long-jenkins-job", "UNSTABLE"]] * 4, "nbad": 9,
+                     "last": ["a-very-long-jenkins-job", 999999]}
+    worst["door"] = {"ok": 1, "e5xx": 12345, "rpm": 99999}
+    worst["net"] = {"ok": 1, "dn": 99999, "up": 99999}
+    worst["scrape"] = {"n": 99, "down": ["a-very-long-scrape-job-name-xyz"] * 4, "ndown": 9}
     lines = uplink.cluster(worst)
-    assert len(lines) <= (204 - 10) // 11  # the Brick panel's rows
-    assert max(len(t) for t, _ in lines) * 6 <= 200 - 8  # 6 px a character at scale 1
+    assert len(lines) <= uplink.ROWS == (204 - 10) // 11  # the Brick panel's rows
+    assert max(len(t) for t, _ in lines) * 6 <= 200 - 8, max(lines, key=lambda x: len(x[0]))  # 6 px a character
+    assert ("> PODS  999 RUNNING  9 BAD", uplink.BAD) in lines  # trimmed, but counted
+    assert all(s in " ".join(t for t, _ in lines) for s in ("PODS", "ARGO", "JENKINS", "DOOR", "NET", "SCRAPE"))
 
 
 def test_uplink_rooms_page_converts_and_adds_the_presto():
@@ -353,7 +370,7 @@ def test_uplink_rooms_page_converts_and_adds_the_presto():
 
 
 def test_uplink_health_flags_and_stale():
-    assert uplink.health(FEED) == [True, False, False, False, False, True]
+    assert uplink.health(FEED) == [True, False, False, False, False, True, True, True, True]
     assert uplink.health(None) == []
     assert not uplink.stale(FEED, 10) and uplink.stale(FEED, 999) and uplink.stale(dict(FEED, age=999), 10)
     assert uplink.cluster(None)[1] == ("  NO FEED YET", uplink.BAD)
