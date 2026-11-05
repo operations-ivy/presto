@@ -23,7 +23,8 @@ def main(argv=None) -> None:
     if mode == "feed":
         from . import feed
 
-        return feed.serve(port)
+        feed.serve(port)
+        return
     from .store import Store
 
     store = Store(os.environ.get("PHOTOS_ROOT", "/data"), int(float(os.environ.get("PHOTOS_LIMIT_GB", "5")) * (1 << 30)))

@@ -276,11 +276,13 @@ class Brick(Screen):
             if not self.receiving:
                 self.receiving = True  # draw RECEIVING first, fetch on the next pass
                 return
-            if self.uplink.fetch(now_ms):
-                flags = uplink.health(self.uplink.data)
-                for i in range(len(self.rain.cols)):
-                    self.rain.set_health(i, flags[i % len(flags)] if flags else True)
-            self.receiving = False
+            try:
+                if self.uplink.fetch(now_ms):
+                    flags = uplink.health(self.uplink.data)
+                    for i in range(len(self.rain.cols)):
+                        self.rain.set_health(i, flags[i % len(flags)] if flags else True)
+            finally:
+                self.receiving = False
         if self.info is not None and time.ticks_diff(now_ms, self.info_at) <= 3000:
             return
         gc.collect()
@@ -298,11 +300,11 @@ class Brick(Screen):
             net, ram, sd = self.info
         return [
             ("> THIS NODE", uplink.H),
-            ("  HOST  %s" % net["host"], ""),
-            ("  IP    %s" % (net["ip"] or "NO SIGNAL"), ""),
-            ("  RSSI  %s" % ("%d dBm" % net["rssi"] if net["rssi"] is not None else "--"), ""),
-            ("  RAM   %d KB FREE   SD %s" % (ram, sd), ""),
-            ("  UP    %d MIN" % (time.ticks_ms() // 60000), ""),
+            ("  HOST  %s" % net["host"], uplink.OK),
+            ("  IP    %s" % (net["ip"] or "NO SIGNAL"), uplink.OK),
+            ("  RSSI  %s" % ("%d dBm" % net["rssi"] if net["rssi"] is not None else "--"), uplink.OK),
+            ("  RAM   %d KB FREE   SD %s" % (ram, sd), uplink.OK),
+            ("  UP    %d MIN" % (time.ticks_ms() // 60000), uplink.OK),
         ]
 
     def draw(self, d, now_ms):
@@ -333,8 +335,9 @@ class Brick(Screen):
             lines = uplink.cluster(data)
         else:
             temp = ctx.room.temp
-            lines = uplink.rooms(data, ctx.fahrenheit, temp) + [("", "")] + self._this_node()
+            lines = uplink.rooms(data, ctx.fahrenheit, temp) + [("", uplink.OK)] + self._this_node()
         lines = lines[: (h - 10) // self.PITCH]
+        pens = {uplink.BAD: p.red, uplink.H: p.phosphor}
         self.typed = min(sum(len(t) for t, _ in lines), self.typed + 18)  # text decodes into place
         left = self.typed
         for i, (line, kind) in enumerate(lines):
@@ -342,7 +345,7 @@ class Brick(Screen):
             left -= len(line)
             if left < 0 and len(shown) < len(line) and shown:
                 shown = shown[:-1] + random.choice(fx.GLYPHS)
-            d.set_pen(p.red if kind == uplink.BAD else p.phosphor if kind == uplink.H else p.text)
+            d.set_pen(pens.get(kind, p.text))
             d.text(shown, x0 + 6, y0 + 6 + i * self.PITCH, w - 8, 1)
         if (now_ms // 500) % 2:
             d.set_pen(p.phosphor)

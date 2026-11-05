@@ -157,7 +157,8 @@ class Mirror:
             self.look, self.fails = pick(json.loads(body)), 0
         except Exception as e:
             self.fails += 1
-            self.addr = None if self.fails >= 3 else self.addr  # it may have moved
+            if self.fails >= 3:
+                self.addr = None  # it may have moved
             if self.fails == 3:
                 print("[neon] mirror:", repr(e))
             self.look = None

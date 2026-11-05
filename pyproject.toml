@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "presto"
-version = "0.3.1"
+version = "0.3.2"
 description = "The brick homelab's Pimoroni Presto: a neon desk display (MicroPython app), and presto-photos (its upload page and photo converter)"
 authors = ["Patrick White <whitep@alumni.vcu.edu>"]
 package-mode = false

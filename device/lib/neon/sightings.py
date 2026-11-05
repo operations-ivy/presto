@@ -73,6 +73,7 @@ class Sightings:
         self.balls = []  # x, y of each fireball in flight
         self.emblem = sprites.Sprite(emblem_art(getattr(ctx, "secrets", None)))
         self.emblem_scale = emblem_scale(self.emblem.w, self.emblem.h)
+        self.spat = 0  # the kaiju's fireballs so far
         self.sparks = []  # fireworks: [x, y, dx, dy, life, pen]
         self.rockets = []  # [x, y, dy, burst_y, pen]
         p = ctx.pens
@@ -83,8 +84,10 @@ class Sightings:
         self.tractor = p.rgb(20, 70, 50)
         blue, deep = p.rgb(40, 110, 255), p.rgb(20, 50, 150)
         # its fireball's two flickering frames: core, flame, edge, trail
-        self.ball_pens = ({"W": p.text, "C": p.cyan, "B": blue, "L": deep},
-                          {"W": p.rgb(200, 255, 255), "C": blue, "B": p.cyan, "L": p.cyan_glow})
+        self.ball_pens = (
+            {"W": p.text, "C": p.cyan, "B": blue, "L": deep},
+            {"W": p.rgb(200, 255, 255), "C": blue, "B": p.cyan, "L": p.cyan_glow},
+        )
         self.firework_pens = (p.magenta, p.cyan, p.amber, p.phosphor, p.violet, p.text)
 
     def step(self, now_ms):
@@ -94,10 +97,7 @@ class Sightings:
         if self.kind is None:
             if time.ticks_diff(now_ms, self.next_at) < 0:
                 return None
-            self.kind = pick(self.last, random.random())
-            self.started = now_ms
-            self.sparks, self.rockets, self.balls = [], [], []
-            self.spat = 0
+            self._begin(pick(self.last, random.random()), now_ms)
             print("[neon] sighting:", self.kind)
         t = time.ticks_diff(now_ms, self.started) / LENGTH_MS[self.kind]
         if t >= 1:
@@ -107,10 +107,12 @@ class Sightings:
         return t
 
     def trigger(self, kind, now_ms):
-        """Start this one now (for trying them out)."""
-        self.kind, self.started = kind, now_ms
+        """Start this one now (a tap on the sky)."""
+        self._begin(kind, now_ms)
+
+    def _begin(self, kind, now_ms):
+        self.kind, self.started, self.spat = kind, now_ms, 0
         self.sparks, self.rockets, self.balls = [], [], []
-        self.spat = 0
 
     # --- drawing ---
     def back(self, d, now_ms):
@@ -135,17 +137,15 @@ class Sightings:
         blink = {"R": "K"} if (now_ms // 1500) % 7 == 0 else None
         self.kaiju.draw(d, p.letters, x, top, 3, blink)
         # at the top of its rise it spits two fireballs from its jaw, no bigger than its head
-        for when in (0.38, 0.52):
-            if t >= when and self.spat < (1 if when < 0.5 else 2):
+        for n, when in enumerate((0.38, 0.52), 1):
+            if t >= when and self.spat < n:
                 self.spat += 1
                 self.balls.append([x - 20, top + 7 * 3 - 7])
         pens = self.ball_pens[(now_ms // 80) % 2]
-        for ball in self.balls[:]:
+        for ball in self.balls:
             ball[0] -= 7
-            if ball[0] < -25:
-                self.balls.remove(ball)
-                continue
             self.fireball.draw(d, pens, ball[0], ball[1] + int(2 * math.sin(ball[0] / 9)), 2)
+        self.balls = [b for b in self.balls if b[0] >= -25]
 
     def _signal(self, d, now_ms, t, layer):
         """A searchlight comes on in the city and throws the emblem onto the clouds."""
@@ -157,15 +157,15 @@ class Sightings:
         sx, sy = 206, GROUND - 30  # the lamp, behind the buildings
         cx, cy = 192 + int(3 * math.sin(now_ms / 1700)), 48  # the spot on the clouds: clear of AM/PM
         d.set_pen(self.beam)
-        for k in range(-9, 10, 2):  # a fan of faint lines: a beam through haze
-            d.line(sx, sy, cx + k * 3, cy + 6)
+        for i in range(-9, 10, 2):  # a fan of faint lines: a beam through haze
+            d.line(sx, sy, cx + i * 3, cy + 6)
         d.set_pen(self.beam_hi)
         d.line(sx, sy, cx, cy + 6)
-        k = self.emblem_scale
-        ew, eh = self.emblem.w * k, self.emblem.h * k
+        scale = self.emblem_scale
+        ew, eh = self.emblem.w * scale, self.emblem.h * scale
         oval(d, self.rim, cx, cy, ew // 2 + 9, eh // 2 + 8)
         oval(d, self.spot, cx, cy, ew // 2 + 7, eh // 2 + 6)
-        self.emblem.draw(d, self.ctx.pens.letters, cx - ew // 2, cy - eh // 2, k)
+        self.emblem.draw(d, self.ctx.pens.letters, cx - ew // 2, cy - eh // 2, scale)
 
     def _fireworks(self, d, now_ms, t, layer):
         """Rockets from behind the city; each bursts into a falling ring of sparks."""
@@ -173,34 +173,39 @@ class Sightings:
             return
         if t < 0.8 and random.random() < 0.09:
             pen = random.choice(self.firework_pens)
-            self.rockets.append([random.randint(140, 225), GROUND - 20, -random.randint(5, 7),
-                                 random.randint(30, 95), pen])
+            self.rockets.append(
+                [random.randint(140, 225), GROUND - 20, -random.randint(5, 7), random.randint(30, 95), pen]
+            )
         p = self.ctx.pens
-        for r in self.rockets[:]:
+        flying = []
+        for r in self.rockets:
             r[1] += r[2]
             d.set_pen(p.sodium)
             d.rectangle(r[0], r[1], 1, 3)
-            if r[1] <= r[3]:
-                self.rockets.remove(r)
-                n = 22
-                for k in range(n):
-                    a = 2 * math.pi * k / n
-                    v = random.uniform(2.0, 3.2)
-                    self.sparks.append([r[0], r[1], v * math.cos(a), v * math.sin(a), random.randint(9, 15), r[4]])
-        for s in self.sparks[:]:
+            if r[1] > r[3]:
+                flying.append(r)
+                continue
+            n = 22  # it bursts
+            for i in range(n):
+                a = 2 * math.pi * i / n
+                v = random.uniform(2.0, 3.2)
+                self.sparks.append([r[0], r[1], v * math.cos(a), v * math.sin(a), random.randint(9, 15), r[4]])
+        self.rockets = flying
+        for s in self.sparks:
             s[0] += s[2]
             s[1] += s[3]
             s[2] *= 0.92
             s[3] = s[3] * 0.92 + 0.18  # gravity
             s[4] -= 1
-            if s[4] <= 0:
-                self.sparks.remove(s)
-                continue
-            d.set_pen(s[5] if s[4] > 4 else p.faint)
-            d.rectangle(int(s[0]), int(s[1]), 2 if s[4] > 6 else 1, 2 if s[4] > 6 else 1)
+            if s[4] > 0:
+                d.set_pen(s[5] if s[4] > 4 else p.faint)
+                d.rectangle(int(s[0]), int(s[1]), 2 if s[4] > 6 else 1, 2 if s[4] > 6 else 1)
+        self.sparks = [s for s in self.sparks if s[4] > 0]
 
     def _ufo(self, d, now_ms, t, layer):
         """A saucer drifts in, beams something up from a rooftop, and darts off."""
+        if layer == "back":
+            return
         p = self.ctx.pens
         if t < 0.3:
             x = 250 - int(ease(t / 0.3) * 80)
@@ -209,14 +214,12 @@ class Sightings:
         else:
             x = 170 - int(((t - 0.8) / 0.2) ** 2 * 260)
         y = 70 + int(3 * math.sin(now_ms / 300))
-        if layer == "back":
-            return
         if 0.35 < t < 0.75:  # the tractor beam, and what it lifts
             d.set_pen(self.tractor)
             bx = x + 14
-            for k in range(0, GROUND - y - 30, 3):
-                w = 4 + k // 6
-                d.rectangle(bx - w // 2, y + 12 + k, w, 1)
+            for dy in range(0, GROUND - y - 30, 3):
+                w = 4 + dy // 6
+                d.rectangle(bx - w // 2, y + 12 + dy, w, 1)
             lift = (t - 0.35) / 0.4
             d.set_pen(p.sodium)
             d.rectangle(bx - 2, int(GROUND - 34 - lift * (GROUND - y - 50)), 4, 3)

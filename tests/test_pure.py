@@ -1,8 +1,9 @@
 import calendar
 import datetime as dt
+import types
 
 import pytest
-from neon import conf, nav, photosync, retry, sprites, tz, wx
+from neon import conf, mirror, nav, photosync, retry, sightings, sprites, tz, uplink, wx
 
 
 # --- tz ------------------------------------------------------------------
@@ -310,13 +311,15 @@ def test_arrows_sit_in_their_tap_bands():
 
 
 # --- the Brick uplink (presto#5) --------------------------------------------
-from neon import uplink  # noqa: E402
 
 FEED = {
-    "at": 1, "age": 5,
-    "nodes": [{"n": "brick420", "ok": 1, "k8s": 1, "cpu": 3, "mem": 23, "disk": 46, "temp": 47},
-              {"n": "brick666", "ok": 0, "k8s": 1},
-              {"n": "brick9000", "ok": 0, "k8s": 0}],
+    "at": 1,
+    "age": 5,
+    "nodes": [
+        {"n": "brick420", "ok": 1, "k8s": 1, "cpu": 3, "mem": 23, "disk": 46, "temp": 47},
+        {"n": "brick666", "ok": 0, "k8s": 1},
+        {"n": "brick9000", "ok": 0, "k8s": 0},
+    ],
     "apps": {"n": 21, "bad": [["chucks-wisdom", "OutOfSync", "Healthy"]], "nbad": 1},
     "pods": {"bad": [["chuck/reader-abc", "CrashLoopBackOff"]], "nbad": 1, "run": 54, "rs": 0},
     "door": {"ok": 1, "e5xx": 0, "rpm": 216},
@@ -346,13 +349,22 @@ def test_uplink_cluster_page():
 
 def test_uplink_lines_fit_the_panel():
     worst = dict(FEED)
-    worst["nodes"] = [{"n": "brick%d" % i, "ok": 1, "k8s": 1, "cpu": 100, "mem": 100, "disk": 100, "temp": 100}
-                      for i in range(5)]
-    worst["pods"] = {"bad": [["namespace/a-very-long-pod-name", "CreateContainerConfigError"]] * 4, "nbad": 9,
-                     "run": 999, "rs": 999}
+    worst["nodes"] = [
+        {"n": "brick%d" % i, "ok": 1, "k8s": 1, "cpu": 100, "mem": 100, "disk": 100, "temp": 100} for i in range(5)
+    ]
+    worst["pods"] = {
+        "bad": [["namespace/a-very-long-pod-name", "CreateContainerConfigError"]] * 4,
+        "nbad": 9,
+        "run": 999,
+        "rs": 999,
+    }
     worst["apps"] = {"n": 30, "bad": [["a-very-long-application-name", "OutOfSync", "Degraded"]] * 4, "nbad": 9}
-    worst["jobs"] = {"n": 16, "bad": [["a-very-long-jenkins-job", "UNSTABLE"]] * 4, "nbad": 9,
-                     "last": ["a-very-long-jenkins-job", 999999]}
+    worst["jobs"] = {
+        "n": 16,
+        "bad": [["a-very-long-jenkins-job", "UNSTABLE"]] * 4,
+        "nbad": 9,
+        "last": ["a-very-long-jenkins-job", 999999],
+    }
     worst["door"] = {"ok": 1, "e5xx": 12345, "rpm": 99999}
     worst["net"] = {"ok": 1, "dn": 99999, "up": 99999}
     worst["scrape"] = {"n": 99, "down": ["a-very-long-scrape-job-name-xyz"] * 4, "ndown": 9}
@@ -365,7 +377,12 @@ def test_uplink_lines_fit_the_panel():
 
 def test_uplink_rooms_page_converts_and_adds_the_presto():
     lines = uplink.rooms(FEED, True, 71.04)
-    assert [t for t, _ in lines] == ["> INDOOR", "  BEDROOM        76.3F", "  MY ECOBEE      72.0F", "  PRESTO         71.0F"]
+    assert [t for t, _ in lines] == [
+        "> INDOOR",
+        "  BEDROOM        76.3F",
+        "  MY ECOBEE      72.0F",
+        "  PRESTO         71.0F",
+    ]
     assert uplink.rooms({"temps": []}, False)[1][0] == "  NO SENSORS ONLINE"
 
 
@@ -381,14 +398,17 @@ def test_brick_feed_setting():
 
 
 # --- the back LEDs mirror plasma ------------------------------------------
-from neon import mirror  # noqa: E402
 
 PLASMA = {  # plasma's GET /, as brick-cicd-config's plasma-look serves it
     "showing": {"source": "board", "pattern": "calm", "priority": 90, "look": {"effect": "pulse", "seconds": 4}},
     "signals": [
         {"source": "board", "pattern": "calm", "priority": 90, "look": {"effect": "pulse", "seconds": 4}},
-        {"source": "jenkins-build-image", "pattern": "stage-build", "priority": 50,
-         "look": {"effect": "rainbow", "seconds": 0.75}},
+        {
+            "source": "jenkins-build-image",
+            "pattern": "stage-build",
+            "priority": 50,
+            "look": {"effect": "rainbow", "seconds": 0.75},
+        },
         {"source": "board-buttons", "pattern": "buttons", "priority": 10, "look": None},
     ],
 }
@@ -401,14 +421,29 @@ def test_mirror_picks_the_strongest_signal_with_a_look_but_not_the_boards():
     assert mirror.pick({"signals": [{"source": "old-plasma", "pattern": "x"}]}) is None  # before plasma-look
 
 
-def test_mirror_every_effect_gives_seven_dim_colours():
-    effects = ["solid", "pulse", "flash", "chase", "stream", "rush", "scanner", "converge", "fill",
-               "rainbow", "nightly", "boil", "something-new"]
-    for effect in effects:
-        for t in (0, 137, 500, 1999):
-            leds = mirror.frame({"effect": effect, "color": "#00ff00", "seconds": 2}, t, level=0.5)
-            assert len(leds) == 7, effect
-            assert all(0 <= v <= 127 for c in leds for v in c), (effect, leds)
+@pytest.mark.parametrize(
+    "effect",
+    [
+        "solid",
+        "pulse",
+        "flash",
+        "chase",
+        "stream",
+        "rush",
+        "scanner",
+        "converge",
+        "fill",
+        "rainbow",
+        "nightly",
+        "boil",
+        "something-new",
+    ],
+)
+@pytest.mark.parametrize("t", [0, 137, 500, 1999])
+def test_mirror_every_effect_gives_seven_dim_colours(effect, t):
+    leds = mirror.frame({"effect": effect, "color": "#00ff00", "seconds": 2}, t, level=0.5)
+    assert len(leds) == 7
+    assert all(0 <= v <= 127 for c in leds for v in c), leds
 
 
 def test_mirror_effects_move():
@@ -432,7 +467,6 @@ def test_plasma_url_setting():
 
 
 # --- Home's rare sightings ---------------------------------------------------
-from neon import sightings  # noqa: E402
 
 
 def test_sightings_gap_is_the_average_give_or_take_half():
@@ -454,8 +488,6 @@ def test_sightings_ease():
 
 
 def test_sky_signal_emblem_from_secrets_or_ours():
-    import types
-
     mine = ("..K..", ".KKK.", "KKKKK")
     assert sightings.emblem_art(types.SimpleNamespace(EMBLEM=mine)) == mine
     assert sightings.emblem_art(types.SimpleNamespace()) == sprites.EMBLEM

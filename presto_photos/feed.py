@@ -48,7 +48,7 @@ QUERIES = {
     "mem": f"100 * (1 - node_memory_MemAvailable_bytes{{{NODE_JOBS}}} / node_memory_MemTotal_bytes{{{NODE_JOBS}}})",
     "temp": f"max by (instance) (node_thermal_zone_temp{{{NODE_JOBS}}})",
     "disk": f'100 * (1 - node_filesystem_avail_bytes{{{NODE_JOBS},mountpoint="/"}}'
-            f' / node_filesystem_size_bytes{{{NODE_JOBS},mountpoint="/"}})',
+    f' / node_filesystem_size_bytes{{{NODE_JOBS},mountpoint="/"}})',
     "running": 'sum(kube_pod_status_phase{phase="Running"})',
     "restarts": "sum(increase(kube_pod_container_status_restarts_total[1h]))",
     # Jenkins: each job's last result (0 SUCCESS, 1 UNSTABLE, 2 FAILURE, 3 NOT_BUILT, 4 ABORTED)
@@ -74,6 +74,9 @@ QUERIES = {
 # Names that aren't indoors. None today; a future outdoor sensor stays off the screen.
 OUTDOOR = re.compile(r"outdoor|outside|exterior|weather", re.I)
 
+# Jenkins' last-build ordinals worth a red line (0 SUCCESS and 3 NOT_BUILT aren't)
+JENKINS_RESULTS = {1: "UNSTABLE", 2: "FAILED", 4: "ABORTED"}
+
 REFRESHES = Counter("feed_refreshes_total", "Feed refreshes, by result", ["result"])
 AGE = Gauge("feed_age_seconds", "Seconds since the feed last had a full answer")
 
@@ -91,12 +94,9 @@ class Prometheus:
         return [(r["metric"], float(r["value"][1])) for r in body["data"]["result"]]
 
 
-def _order(name: str):
+def _order(name: str) -> tuple[int, str]:
     """brick420 before brick2000: by the number in the name, not as text."""
     return (len(name), name)
-
-
-JENKINS_RESULTS = {1: "UNSTABLE", 2: "FAILED", 4: "ABORTED"}
 
 
 def _total(rows) -> int:
@@ -141,11 +141,11 @@ def build(r: dict[str, list[tuple[dict, float]]], now: float) -> dict:
     errors = round(sum(v for _, v in r["door_5xx"]))
 
     results = {m.get("jenkins_job", "?"): int(v) for m, v in r["jobs"]}
-    bad_jobs = sorted([j, JENKINS_RESULTS.get(n, "?")] for j, n in results.items() if n in (1, 2, 4))
-    starts = sorted(((v, m.get("jenkins_job", "?")) for m, v in r["job_start"]), reverse=True)
-    last = [starts[0][1], max(0, int(now - starts[0][0] / 1000))] if starts else None
+    bad_jobs = sorted([j, JENKINS_RESULTS[n]] for j, n in results.items() if n in JENKINS_RESULTS)
+    newest = max(((v, m.get("jenkins_job", "?")) for m, v in r["job_start"]), default=None)
+    last = [newest[1], max(0, int(now - newest[0] / 1000))] if newest else None
 
-    down = sorted(f"{m.get('job', '?')}" for m, _ in r["targets_down"])
+    down = sorted(m.get("job", "?") for m, _ in r["targets_down"])
     rates = {("dn" if "download" in m.get("entity", "") else "up"): round(v) for m, v in r["rates"]}
     net = {"ok": int(any(v == 1 for _, v in r["wan"])), **rates} if r["wan"] else None
 
@@ -161,8 +161,7 @@ def build(r: dict[str, list[tuple[dict, float]]], now: float) -> dict:
         "at": int(now),
         "nodes": sorted(nodes.values(), key=lambda n: _order(n["n"])),
         "apps": {"n": len(apps), "bad": bad_apps[:MAX_ROWS], "nbad": len(bad_apps)},
-        "pods": {"bad": pods[:MAX_ROWS], "nbad": len(pods), "run": _total(r["running"]),
-                 "rs": _total(r["restarts"])},
+        "pods": {"bad": pods[:MAX_ROWS], "nbad": len(pods), "run": _total(r["running"]), "rs": _total(r["restarts"])},
         "jobs": {"n": len(results), "bad": bad_jobs[:MAX_ROWS], "nbad": len(bad_jobs), "last": last},
         "door": {"ok": int(door_up), "e5xx": errors, "rpm": _total(r["door_rpm"])},
         "net": net,

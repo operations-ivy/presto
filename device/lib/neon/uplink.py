@@ -1,11 +1,12 @@
 """The Brick screen's uplink: presto-feed's JSON (presto#5) as two pages of lines.
 
 CLUSTER: each brick (ready, CPU, memory, disk, temperature), the pods, Argo CD,
-Jenkins, the front door, the internet and Prometheus' scrapes. ROOMS: every indoor temperature Home Assistant has online, plus the
-Presto's own sensor, and this node. Passive only: a problem shows as a red line
-and a stuttering column, never a sound or a takeover.
+Jenkins, the front door, the internet and Prometheus' scrapes. ROOMS: every
+indoor temperature Home Assistant has online, plus the Presto's own sensor, and
+this node. Passive only: a problem shows as a red line and a stuttering column,
+never a sound or a takeover.
 
-pages() and health() are pure (tested on the laptop); Uplink does the fetch.
+cluster(), rooms() and health() are pure (tested on the laptop); Uplink does the fetch.
 """
 
 import time
@@ -14,6 +15,7 @@ EVERY_MS = 60000  # a fetch is a ~3 s TLS connect that stalls the screen: once a
 FIRST_MS = 1500  # after entering, let the screen draw before the first fetch
 STALE_S = 180  # older than this (here or at the feed): STALE
 TABS = ("CLUSTER", "ROOMS")
+ROWS = 17  # the Brick panel's lines
 
 REASONS = {
     "CrashLoopBackOff": "CRASHLOOP",
@@ -35,9 +37,6 @@ def _short(s, n):
     return s if len(s) <= n else s[: n - 1] + "~"
 
 
-ROWS = 17  # the Brick panel's lines
-
-
 def _n(x):
     """A count in at most 4 characters: 216, 9999, 12K, 1.2M."""
     x = int(x)
@@ -45,7 +44,13 @@ def _n(x):
 
 
 def _ago(s):
-    return "%dS" % s if s < 60 else "%dM" % (s // 60) if s < 3600 else "%dH" % (s // 3600) if s < 172800 else "%dD" % (s // 86400)
+    if s < 60:
+        return "%dS" % s
+    if s < 3600:
+        return "%dM" % (s // 60)
+    if s < 172800:
+        return "%dH" % (s // 3600)
+    return "%dD" % (s // 86400)
 
 
 def _pct(n, key):
@@ -210,7 +215,7 @@ class Uplink:
             r = requests.get(self.url, timeout=10)
             if r.status_code != 200:
                 raise OSError("HTTP %d" % r.status_code)
-            self.data, self.got_at = r.json(), time.ticks_ms()
+            self.data, self.got_at = r.json(), time.ticks_ms()  # now, not now_ms: the fetch took ~3 s
             return True
         except Exception as e:  # keep the last answer; the screen says STALE once it's old
             print("[neon] uplink:", repr(e))

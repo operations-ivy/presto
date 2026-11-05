@@ -88,18 +88,27 @@ def test_a_failed_refresh_keeps_the_last_answer():
     f.snapshot = {"at": 5}
     f.refresh()
     assert f.snapshot == {"at": 5}
-    assert json.loads(f.body())["at"] == 5 and json.loads(f.body())["age"] > 0
+    body = json.loads(f.body())
+    assert body["at"] == 5 and body["age"] > 0
 
 
 def test_jenkins_the_internet_and_the_scrapes():
-    out = feed.build(answers(
-        jobs=[({"jenkins_job": "build-image"}, 0), ({"jenkins_job": "test-all"}, 2), ({"jenkins_job": "x"}, 3)],
-        job_start=[({"jenkins_job": "build-image"}, 90_000), ({"jenkins_job": "test-all"}, 40_000)],
-        wan=[({"entity": "binary_sensor.router_wan_status"}, 1)],
-        rates=[({"entity": "sensor.router_download_speed"}, 812.4), ({"entity": "sensor.router_upload_speed"}, 40.2)],
-        targets=[({}, 56)], targets_down=[({"job": "lcars"}, 0)],
-        running=[({}, 54)], restarts=[({}, 2.0)],
-    ), 100)
+    out = feed.build(
+        answers(
+            jobs=[({"jenkins_job": "build-image"}, 0), ({"jenkins_job": "test-all"}, 2), ({"jenkins_job": "x"}, 3)],
+            job_start=[({"jenkins_job": "build-image"}, 90_000), ({"jenkins_job": "test-all"}, 40_000)],
+            wan=[({"entity": "binary_sensor.router_wan_status"}, 1)],
+            rates=[
+                ({"entity": "sensor.router_download_speed"}, 812.4),
+                ({"entity": "sensor.router_upload_speed"}, 40.2),
+            ],
+            targets=[({}, 56)],
+            targets_down=[({"job": "lcars"}, 0)],
+            running=[({}, 54)],
+            restarts=[({}, 2.0)],
+        ),
+        100,
+    )
     assert out["jobs"] == {"n": 3, "bad": [["test-all", "FAILED"]], "nbad": 1, "last": ["build-image", 10]}
     assert out["net"] == {"ok": 1, "dn": 812, "up": 40}
     assert out["scrape"] == {"n": 56, "down": ["lcars"], "ndown": 1}

@@ -10,6 +10,7 @@ W = H = 240  # the Presto at its native speed: 240x240, doubled to the 480 panel
 SKY_BOTTOM = 165
 GROUND = 226
 LEFT = 14  # home_align: left: the text's margin, clear of the left arrow (y 137+)
+SUMMON_X, SUMMON_Y = 130, 150  # left layout: a tap right of this and above that summons a sighting
 ARROW_SCALE = 2
 _AW, _AH = 15 * ARROW_SCALE, 10 * ARROW_SCALE  # sprites.ARROW pointing up: 30x20
 ARROW_AT = {  # top-left corners; left and right sit below the forecast
@@ -82,8 +83,9 @@ class Home:
             }
             for t in range(16)
         ]
+        self.left = ctx.settings.get("home_align") == "left"
         # rare sightings in the right half of the sky: only with the left-aligned layout
-        minutes = ctx.settings.get("sighting_minutes", 15) if ctx.settings.get("home_align") == "left" else 0
+        minutes = ctx.settings.get("sighting_minutes", 15) if self.left else 0
         self.sights = sightings.Sightings(ctx, minutes)
         self.sky_day = [p.rgb(*theme.mix(theme.PALETTE["dust_dark"], theme.PALETTE["dust"], i / 7)) for i in range(8)]
         self.sky_night = [p.rgb(*theme.mix(theme.PALETTE["night"], (30, 14, 52), i / 7)) for i in range(8)]
@@ -162,7 +164,7 @@ class Home:
 
     def tap(self, x, y):
         now = time.ticks_ms()
-        if self.sights.minutes and x >= 130 and y < 150 and self.sights.kind is None:
+        if self.sights.minutes and x >= SUMMON_X and y < SUMMON_Y and self.sights.kind is None:
             self.sights.trigger(sightings.pick(self.sights.last, random.random()), now)  # summon one
         else:
             self.glitch_at = now  # tap the sky: make it glitch
@@ -276,7 +278,7 @@ class Home:
             date = tz.date_line(lt)
         else:
             s, date = "--:--", "SYNCING TIME" if ctx.net.up else "NO SIGNAL"
-        left = ctx.settings.get("home_align") == "left"
+        left = self.left
         # centered: 48 px tall, clear of the top arrow and the forecast; left: 32 px, leaving
         # the right half of the sky to the sightings
         scale = 4 if left else 6
@@ -307,7 +309,7 @@ class Home:
         ctx = self.ctx
         s = ctx.weather.summary
         kind = ctx.weather.kind
-        left = ctx.settings.get("home_align") == "left"
+        left = self.left
         y = 78 if left else 102
         # the icon: animated, two frames
         alt = (self.frame // 5) % 2
@@ -325,19 +327,20 @@ class Home:
             if kind == "fog":
                 self.icons["fog"].draw(d, p.letters, ix, y + 13, 2)
         tx = ix + 34 if left else ix + 38
-        big, step, wrap = (1, 10, 100) if left else (2, 18, 158)  # left: the small font, in ~100 px
+        # the forecast's scale, then each line's y; left: the small font, in ~100 px
+        scale, label_y, room_y, wrap = (1, 11, 21, 100) if left else (2, 19, 30, 158)
         d.set_pen(p.text)
         if not ctx.weather.configured:
-            d.text("SET LATITUDE/", tx, y + 1, 150, 1)
-            d.text("LONGITUDE", tx, y + 10, 150, 1)
+            d.text("SET LATITUDE/", tx, y + 1, wrap, 1)
+            d.text("LONGITUDE", tx, y + 10, wrap, 1)
         else:
-            d.text(wx.line(s, ""), tx, y + 1, wrap, big)
+            d.text(wx.line(s, ""), tx, y + 1, wrap, scale)
             d.set_pen(p.dim)
-            d.text(wx.LABELS.get(kind, "NO DATA"), tx, y + 1 + step, wrap, 1)
+            d.text(wx.LABELS.get(kind, "NO DATA"), tx, y + label_y, wrap, 1)
         room = ctx.room
         if room.temp is not None:
             d.set_pen(p.sodium)
-            d.text("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), tx, y + 1 + step + (10 if left else 11), wrap, 1)
+            d.text("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), tx, y + room_y, wrap, 1)
 
     def _arms(self, d, p, now_ms):
         # no app names (presto#11): just the four chevrons, fading slowly green <-> black
