@@ -5,7 +5,7 @@ import os
 import random
 import time
 
-from neon import fx, theme, uplink, wx
+from neon import card, fx, theme, uplink, wx
 
 W = H = 240
 
@@ -178,6 +178,7 @@ class Photos(Screen):
             self.held, self.error = path, None
         except Exception as e:
             self.held, self.error = None, repr(e)[:40]
+            card.failed(e)  # an I/O error: remount the card; the next frame tries again
         print("[neon] photo %s in %d ms" % (name, time.ticks_diff(time.ticks_ms(), t0)))
 
     def tap(self, x, y):

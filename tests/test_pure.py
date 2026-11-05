@@ -3,7 +3,7 @@ import datetime as dt
 import types
 
 import pytest
-from neon import conf, mirror, nav, photosync, retry, sightings, sprites, tz, uplink, wx
+from neon import card, conf, mirror, nav, photosync, retry, sightings, sprites, tz, uplink, wx
 
 
 # --- tz ------------------------------------------------------------------
@@ -566,7 +566,10 @@ def test_sync_survives_a_card_error(monkeypatch):
     monkeypatch.setattr(feed, "_step", eio)
     monkeypatch.setattr(photosync.time, "ticks_ms", lambda: 0, raising=False)  # MicroPython's
     monkeypatch.setattr(photosync.time, "ticks_add", lambda a, b: a + b, raising=False)
+    remounted = []
+    monkeypatch.setattr(card, "failed", remounted.append)
     assert feed.step(types.SimpleNamespace(up=True), -10**6) is False
+    assert [e.args for e in remounted] == [(5,)]  # the card is remounted for the retry
     assert feed.queue == [] and feed.dl is None
 
 
@@ -577,3 +580,27 @@ def test_uplink_maintenance_is_calm():
     assert ("  BRICK666   MAINT 2H", uplink.OK) in lines
     assert ("  BRICK1982  MAINT NO END", uplink.OK) in lines
     assert uplink.health(data)[:2] == [True, True]  # their rain columns flow
+
+
+def test_card_remounts_after_an_io_error_not_twice_in_a_row(monkeypatch):
+    """2026-11-05: after an EIO every read failed until a restart; a remount fixes it."""
+    clock = [100_000]
+    calls = []
+    monkeypatch.setattr(card.time, "ticks_ms", lambda: clock[0], raising=False)
+    monkeypatch.setattr(card.time, "ticks_diff", lambda a, b: a - b, raising=False)
+    monkeypatch.setattr(card.os, "umount", lambda path: calls.append(("umount", path)), raising=False)
+
+    def fake_mount():
+        calls.append(("mount",))
+        return True
+
+    monkeypatch.setattr(card, "mount", fake_mount)
+    monkeypatch.setattr(card, "_last", None)
+    monkeypatch.setattr(card, "remounts", 0)
+    assert not card.failed(ValueError("not the card"))
+    assert not card.failed(OSError(2))  # ENOENT: a missing file, not a stuck card
+    assert card.failed(OSError(5)) and calls == [("umount", "/sd"), ("mount",)]
+    clock[0] += card.GAP_MS - 1
+    assert not card.failed(OSError(5))  # too soon
+    clock[0] += 2
+    assert card.failed(OSError(5)) and card.remounts == 2

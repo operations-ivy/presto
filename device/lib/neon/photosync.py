@@ -17,6 +17,8 @@ import json
 import os
 import time
 
+from neon import card
+
 DIR = "/sd/feed"
 SIZE = 240  # the app runs at 240x240
 FRAME_BYTES = SIZE * SIZE * 2
@@ -127,6 +129,7 @@ class Feed:
             return self._step(last_touch_ms)
         except Exception as e:
             log("sync:", repr(e))
+            card.failed(e)  # an I/O error: remount the card before the retry
             self._close()
             self.queue = []
             self.next_at = time.ticks_add(time.ticks_ms(), self.RETRY_S * 1000)
