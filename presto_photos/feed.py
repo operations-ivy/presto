@@ -17,6 +17,7 @@ Presto says STALE.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import threading
@@ -43,6 +44,10 @@ NODE_JOBS = 'job=~"node-exporter|brick9000-node|brick1982-node"'
 QUERIES = {
     "ready": 'kube_node_status_condition{condition="Ready",status="true"}',
     "host_up": 'up{job=~"brick9000-node|brick1982-node"}',
+    # maintenance windows (brick-cicd-config's maintenance-window job): a node in one, and
+    # what runs on it, shows calm, never red. Its end as unix time, +Inf for no end.
+    "maint": "brick_maintenance_until_seconds > time()",
+    "pod_nodes": "kube_pod_info",
     "uname": f"node_uname_info{{{NODE_JOBS}}}",
     "cpu": f'100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{{{NODE_JOBS},mode="idle"}}[2m])))',
     "mem": f"100 * (1 - node_memory_MemAvailable_bytes{{{NODE_JOBS}}} / node_memory_MemTotal_bytes{{{NODE_JOBS}}})",
@@ -109,15 +114,39 @@ def sensor_name(friendly: str) -> str:
     return s or friendly
 
 
+def _maint_left(end: float, now: float) -> int:
+    """A maintenance window's seconds left, or -1 when it has no end."""
+    return -1 if math.isinf(end) else max(0, int(end - now))
+
+
+def _runs_on(pods_by_ns: dict[str, list[str]], namespace: str, workload: str) -> bool:
+    """A pod of this workload (named <workload>-<suffix>) is among these."""
+    return any(pod.startswith(f"{workload}-") for pod in pods_by_ns.get(namespace, ()))
+
+
+def _host_of(m: dict, names: dict[str, str]) -> str:
+    """A scrape target's host: node_exporter's nodename for it, else its instance without the port."""
+    instance = m.get("instance", "")
+    return names.get(instance, instance.split(":")[0])
+
+
 def build(r: dict[str, list[tuple[dict, float]]], now: float) -> dict:
     """The feed from the QUERIES' results (pure: tested without Prometheus)."""
     names = {m["instance"]: m.get("nodename", m["instance"]) for m, _ in r["uname"]}
+    maint = {m["node"]: v for m, v in r["maint"] if "node" in m}
+    resting = {(m.get("namespace"), m.get("pod")) for m, _ in r["pod_nodes"] if m.get("node") in maint}
+    resting_by_ns: dict[str, list[str]] = {}
+    for ns, pod in resting:
+        resting_by_ns.setdefault(ns, []).append(pod)
     nodes: dict[str, dict] = {}
     for m, v in r["ready"]:
         nodes[m["node"]] = {"n": m["node"], "ok": int(v == 1), "k8s": 1}
     for m, v in r["host_up"]:
         n = names.get(m["instance"], m["instance"])
         nodes[n] = {"n": n, "ok": int(v == 1), "k8s": 0}
+    for n, end in maint.items():  # a host that's off for the work is still listed
+        node = nodes.setdefault(n, {"n": n, "ok": 0, "k8s": 0})
+        node["maint"] = _maint_left(end, now)
     for key in ("cpu", "mem", "disk", "temp"):
         for m, v in r[key]:
             n = names.get(m.get("instance"), m.get("instance"))
@@ -131,11 +160,13 @@ def build(r: dict[str, list[tuple[dict, float]]], now: float) -> dict:
         if m.get("sync_status") != "Synced" or m.get("health_status") != "Healthy"
     ]
 
-    pods = [
-        [f"{m['namespace']}/{m.get('deployment') or m.get('statefulset')}", f"{int(v)} NOT READY"]
-        for m, v in r["unavailable"] + r["unready_sts"]
-    ]
-    pods += [[f"{m['namespace']}/{m['pod']}", m["reason"]] for m, _ in r["stuck"]]
+    pods = []
+    for m, v in r["unavailable"] + r["unready_sts"]:
+        workload = m.get("deployment") or m.get("statefulset") or "?"
+        if not _runs_on(resting_by_ns, m["namespace"], workload):
+            pods.append([f"{m['namespace']}/{workload}", f"{int(v)} NOT READY"])
+    pods += [[f"{m['namespace']}/{m['pod']}", m["reason"]] for m, _ in r["stuck"]
+             if (m["namespace"], m["pod"]) not in resting]
 
     door_up = any(v == 1 for _, v in r["door_up"])
     errors = round(sum(v for _, v in r["door_5xx"]))
@@ -145,7 +176,10 @@ def build(r: dict[str, list[tuple[dict, float]]], now: float) -> dict:
     newest = max(((v, m.get("jenkins_job", "?")) for m, v in r["job_start"]), default=None)
     last = [newest[1], max(0, int(now - newest[0] / 1000))] if newest else None
 
-    down = sorted(m.get("job", "?") for m, _ in r["targets_down"])
+    down = sorted(
+        m.get("job", "?") for m, _ in r["targets_down"]
+        if _host_of(m, names) not in maint and (m.get("namespace"), m.get("pod")) not in resting
+    )
     rates = {("dn" if "download" in m.get("entity", "") else "up"): round(v) for m, v in r["rates"]}
     net = {"ok": int(any(v == 1 for _, v in r["wan"])), **rates} if r["wan"] else None
 

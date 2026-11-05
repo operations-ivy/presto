@@ -568,3 +568,12 @@ def test_sync_survives_a_card_error(monkeypatch):
     monkeypatch.setattr(photosync.time, "ticks_add", lambda a, b: a + b, raising=False)
     assert feed.step(types.SimpleNamespace(up=True), -10**6) is False
     assert feed.queue == [] and feed.dl is None
+
+
+def test_uplink_maintenance_is_calm():
+    data = dict(FEED, nodes=[{"n": "brick666", "ok": 0, "k8s": 1, "maint": 7200},
+                             {"n": "brick1982", "ok": 0, "k8s": 0, "maint": -1}])
+    lines = uplink.cluster(data)
+    assert ("  BRICK666   MAINT 2H", uplink.OK) in lines
+    assert ("  BRICK1982  MAINT NO END", uplink.OK) in lines
+    assert uplink.health(data)[:2] == [True, True]  # their rain columns flow

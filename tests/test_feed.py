@@ -114,3 +114,20 @@ def test_jenkins_the_internet_and_the_scrapes():
     assert out["scrape"] == {"n": 56, "down": ["lcars"], "ndown": 1}
     assert (out["pods"]["run"], out["pods"]["rs"]) == (54, 2)
     assert feed.build(answers(), 100)["net"] is None  # no router data: no NET line
+
+
+def test_a_node_in_maintenance_and_what_runs_on_it_are_calm():
+    out = feed.build(answers(
+        maint=[({"node": "brick666"}, 100 + 3600), ({"node": "brick1982"}, float("inf"))],
+        pod_nodes=[({"namespace": "chuck", "pod": "reader-5d9-abc", "node": "brick666"}, 1),
+                   ({"namespace": "x", "pod": "p0", "node": "brick666"}, 1)],
+        unavailable=[({"namespace": "chuck", "deployment": "reader"}, 1), ({"namespace": "wigle", "deployment": "console"}, 1)],
+        stuck=[({"namespace": "x", "pod": "p0", "reason": "CrashLoopBackOff"}, 1)],
+        uname=[({"instance": "brick1982", "nodename": "brick1982"}, 1)],
+        targets_down=[({"job": "brick1982-node", "instance": "brick1982"}, 0), ({"job": "lcars", "instance": "brick1982:8767"}, 0),
+                      ({"job": "overwatch", "instance": "10.0.0.9:80"}, 0)],
+    ), 100)
+    nodes = {n["n"]: n for n in out["nodes"]}
+    assert nodes["brick666"]["maint"] == 3600 and nodes["brick1982"]["maint"] == -1  # off, but listed
+    assert out["pods"]["bad"] == [["wigle/console", "1 NOT READY"]]  # reader and p0 are on brick666
+    assert out["scrape"]["down"] == ["overwatch"]

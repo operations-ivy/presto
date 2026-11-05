@@ -53,6 +53,11 @@ def _ago(s):
     return "%dD" % (s // 86400)
 
 
+def _left(seconds):
+    """A maintenance window's time left: presto-feed sends -1 for no end."""
+    return _ago(seconds) if seconds >= 0 else "NO END"
+
+
 def _pct(n, key):
     return "%3d%%" % n[key] if key in n else "  --"
 
@@ -81,6 +86,9 @@ def _more(out, shown, total, more):
 def _cluster(data, cap, more=1, last=1):
     out = [("> NODES     CPU MEM DSK TEMP", H)]
     for n in data.get("nodes", []):
+        if "maint" in n:  # a maintenance window: calm, with how long it has left
+            out.append(("  %-9s  MAINT %s" % (_short(n["n"], 9), _left(n["maint"])), OK))
+            continue
         if not n.get("ok"):
             out.append(("  %-9s  %s" % (_short(n["n"], 9), "NOT READY" if n.get("k8s") else "DOWN"), BAD))
             continue
@@ -167,7 +175,7 @@ def health(data):
     the internet and the scrapes."""
     if data is None:
         return []
-    flags = [bool(n.get("ok")) for n in data.get("nodes", [])]
+    flags = [bool(n.get("ok")) or "maint" in n for n in data.get("nodes", [])]
     flags.append(not data.get("apps", {}).get("nbad"))
     flags.append(not data.get("pods", {}).get("nbad"))
     door = data.get("door", {})
