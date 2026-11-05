@@ -109,7 +109,7 @@ class Clock:
 
 
 class Weather:
-    EVERY_S = 30 * 60
+    EVERY_S = 10 * 60  # the user, 2026-11-04
     RETRY_S = 5 * 60
 
     def __init__(self, secrets, fahrenheit=True):
@@ -127,7 +127,7 @@ class Weather:
         return self.configured and net.up and time.ticks_diff(time.ticks_ms(), self.next_at) >= 0
 
     def fetch(self, clock):
-        """Blocking for a second or two, every 30 minutes."""
+        """Blocking for a second or two, every 10 minutes."""
         try:
             import requests
 

@@ -81,7 +81,7 @@ def minute_of(iso):
 
 def daytime(s, minute):
     """Day or night now: between today's sunrise and sunset when the forecast has them and
-    the clock is set (on the minute), else the forecast's own is_day (refreshed every 30 min)."""
+    the clock is set (on the minute), else the forecast's own is_day (refreshed every 10 min)."""
     if not s:
         return False
     rise, down = s.get("sunrise"), s.get("sunset")
