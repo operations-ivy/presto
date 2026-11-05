@@ -117,9 +117,22 @@ class Feed:
 
     # --- the loop ---
     def step(self, net, last_touch_ms):
-        """Call once per pass of the main loop. Returns True if the photo list changed."""
+        """Call once per pass of the main loop. Returns True if the photo list changed.
+
+        Never raises: a card error (OSError 5, EIO, 2026-11-05: it took the app
+        down after a good manifest) skips this sync, and it tries again later."""
         if not (self.ready and net.up):
             return False
+        try:
+            return self._step(last_touch_ms)
+        except Exception as e:
+            log("sync:", repr(e))
+            self._close()
+            self.queue = []
+            self.next_at = time.ticks_add(time.ticks_ms(), self.RETRY_S * 1000)
+            return False
+
+    def _step(self, last_touch_ms):
         if self.dl:
             return self._read()
         quiet = time.ticks_diff(time.ticks_ms(), last_touch_ms) > self.QUIET_MS

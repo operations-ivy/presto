@@ -97,6 +97,7 @@ class Home:
             "night": [p.rgb(*theme.mix(theme.PALETTE["night"], (30, 14, 52), i / 7)) for i in range(8)],
         }
         self.day = False
+        self.daylight = ctx.settings.get("home_sky") == "daylight"  # the user, 2026-11-05: night only
         self.building_pen = p.rgb(10, 8, 20)
         self.building_edge = p.rgb(24, 18, 44)
         self.win_pens = (p.sodium, p.amber, p.cyan)
@@ -198,7 +199,7 @@ class Home:
             lt = ctx.clock.now()
             minute = lt[3] * 60 + lt[4]
         self.day = wx.daytime(ctx.weather.summary, minute)  # sunrise to sunset at the coordinates
-        sky = wx.sky(kind, self.day)
+        sky = wx.sky(kind, self.day and self.daylight)  # the forecast's sun/moon still follows the real day
 
         # sky: 2049 haze by day (grey when the weather is), violet at night
         bands = self.skies[sky]
