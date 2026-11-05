@@ -56,7 +56,7 @@ class Home:
         print("[neon] signs", [(s[0], s[6], s[7]) for s in self.signs])
         self.stars = [(r(0, W - 1), r(0, SKY_BOTTOM - 70), r(0, 99)) for _ in range(45)]
         random.seed(time.ticks_us())  # everything after this (rain, glitches) differs each boot
-        self.rain = fx.Rain(n=60, top=-10, bottom=GROUND)
+        self.rain = fx.GlyphDrops(n=60, top=-10, bottom=GROUND)
         self.car = sprites.Sprite(sprites.SPINNER)
         self.car_x = None
         self.car_next = time.ticks_add(time.ticks_ms(), 8000)
@@ -87,13 +87,22 @@ class Home:
         # rare sightings in the right half of the sky: only with the left-aligned layout
         minutes = ctx.settings.get("sighting_minutes", 15) if self.left else 0
         self.sights = sightings.Sightings(ctx, minutes)
-        self.sky_day = [p.rgb(*theme.mix(theme.PALETTE["dust_dark"], theme.PALETTE["dust"], i / 7)) for i in range(8)]
-        self.sky_night = [p.rgb(*theme.mix(theme.PALETTE["night"], (30, 14, 52), i / 7)) for i in range(8)]
+        dust_dark, dust = theme.PALETTE["dust_dark"], theme.PALETTE["dust"]
+        grey_top, grey_low = (44, 44, 52), (104, 102, 110)
+        self.skies = {  # 8 bands each, top to bottom (wx.sky picks one)
+            "haze": [p.rgb(*theme.mix(dust_dark, dust, i / 7)) for i in range(8)],
+            # grey cloud above, the haze showing through low down
+            "grey_haze": [p.rgb(*theme.mix(grey_top, dust, (i / 7) ** 1.6)) for i in range(8)],
+            "overcast": [p.rgb(*theme.mix(grey_top, grey_low, i / 7)) for i in range(8)],
+            "night": [p.rgb(*theme.mix(theme.PALETTE["night"], (30, 14, 52), i / 7)) for i in range(8)],
+        }
+        self.day = False
         self.building_pen = p.rgb(10, 8, 20)
         self.building_edge = p.rgb(24, 18, 44)
         self.win_pens = (p.sodium, p.amber, p.cyan)
-        self.rain_far = p.rgb(40, 60, 90)
-        self.rain_near = p.rgb(90, 130, 170)
+        self.rain_far = p.phosphor_dim  # the glyph rain: dim far away, bright close up
+        self.rain_near = p.rgb(30, 170, 90)
+        self.rain_head = p.phosphor
         self.entered_at = 0
         self.glitch_at = time.ticks_add(time.ticks_ms(), 20000)
         self.frame = 0
@@ -181,11 +190,15 @@ class Home:
         ctx, p = self.ctx, self.ctx.pens
         self.frame += 1
         kind = ctx.weather.kind
-        day = bool(ctx.weather.summary and ctx.weather.summary.get("is_day"))
-        hot = ctx.weather.summary and (ctx.weather.summary.get("hi") or 0) >= (85 if ctx.fahrenheit else 29)
+        minute = None
+        if ctx.clock.valid:
+            lt = ctx.clock.now()
+            minute = lt[3] * 60 + lt[4]
+        self.day = wx.daytime(ctx.weather.summary, minute)  # sunrise to sunset at the coordinates
+        sky = wx.sky(kind, self.day)
 
-        # sky: night violet, or 2049 dust when it's a hot day
-        bands = self.sky_day if (day and hot) else self.sky_night
+        # sky: 2049 haze by day (grey when the weather is), violet at night
+        bands = self.skies[sky]
         bh = SKY_BOTTOM // len(bands) + 1
         for i, pen in enumerate(bands):
             d.set_pen(pen)
@@ -194,7 +207,7 @@ class Home:
         d.rectangle(0, SKY_BOTTOM, W, H - SKY_BOTTOM)
 
         # stars on a clear night
-        if kind in ("clear", "partly", "unknown") and not (day and hot):
+        if sky == "night" and kind in ("clear", "partly", "unknown"):
             for sx, sy, ph in self.stars:
                 tw = (self.frame + ph) % 40
                 d.set_pen(p.text if tw < 3 else p.faint)
@@ -226,7 +239,7 @@ class Home:
         # rain, as hard as the forecast says
         self.rain.n = wx.RAIN.get(kind, 15)
         if self.rain.n:
-            self.rain.step_draw(d, self.rain_far, self.rain_near)
+            self.rain.step_draw(d, self.rain_far, self.rain_near, self.rain_head)
 
         self._clock(d, p, now_ms)
         self._forecast(d, p)
@@ -315,7 +328,7 @@ class Home:
         alt = (self.frame // 5) % 2
         ix = LEFT if left else 44
         if kind in ("clear", "partly"):
-            self.icons["sun" if s and s.get("is_day") else "moon"].draw(d, p.letters, ix, y, 2)
+            self.icons["sun" if self.day else "moon"].draw(d, p.letters, ix, y, 2)
         else:
             self.icons["cloud"].draw(d, p.letters, ix, y, 2)
             if kind in ("rain", "storm"):

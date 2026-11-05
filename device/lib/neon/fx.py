@@ -41,23 +41,26 @@ def glitch_text(display, pens, s, x, y, scale, amount):
     display.text(s, x + random.randint(-1, 1), y, W, scale)
 
 
-class Rain:
-    """Slanted streaks falling through the scene; density changes with the forecast."""
+class GlyphDrops:
+    """Home's rain as single green glyphs falling from the sky (the user, 2026-11-04);
+    how many fall still follows the forecast. A drop changes glyph now and then."""
 
-    def __init__(self, n=120, top=0, bottom=W):
+    def __init__(self, n=60, top=0, bottom=W):
         self.top, self.bottom = top, bottom
-        self.drops = [[random.randint(0, 260), random.randint(top, bottom), random.randint(5, 9)] for _ in range(200)]
+        self.drops = [[random.randint(0, W - 6), random.randint(top, bottom), random.randint(3, 7),
+                       random.randint(0, len(GLYPHS) - 1)] for _ in range(200)]
         self.n = n
 
-    def step_draw(self, display, pen_far, pen_near):
+    def step_draw(self, display, pen_far, pen_near, pen_head):
         for i in range(min(self.n, len(self.drops))):
             d = self.drops[i]
             d[1] += d[2]
-            d[0] -= d[2] // 4
             if d[1] > self.bottom:
-                d[0], d[1] = random.randint(0, 270), self.top - random.randint(0, 20)
-            display.set_pen(pen_near if d[2] > 7 else pen_far)
-            display.line(d[0], d[1], d[0] - d[2] // 4, d[1] + d[2] // 2 + 1)
+                d[0], d[1], d[3] = random.randint(0, W - 6), self.top - random.randint(0, 30), random.randint(0, 30)
+            elif random.random() < 0.06:
+                d[3] = random.randint(0, len(GLYPHS) - 1)
+            display.set_pen(pen_head if d[2] >= 7 else pen_near if d[2] >= 5 else pen_far)
+            display.character(ord(GLYPHS[d[3] % len(GLYPHS)]), d[0], d[1], 1)
 
 
 class GlyphRain:

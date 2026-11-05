@@ -496,3 +496,34 @@ def test_sky_signal_emblem_from_secrets_or_ours():
     assert sightings.emblem_art(types.SimpleNamespace(EMBLEM=("K" * 99,))) == sprites.EMBLEM  # too wide
     assert sightings.emblem_scale(12, 7) == 3 and sightings.emblem_scale(30, 12) == 2
     assert sightings.emblem_scale(30, 20) == 1
+
+
+# --- Home's sky (2026-11-04: haze by day, grey when the weather is, night after sunset) ---
+def test_sunrise_and_sunset_from_the_forecast():
+    data = {"current": {"weather_code": 0, "is_day": 1},
+            "daily": {"sunrise": ["2026-11-04T06:41"], "sunset": ["2026-11-04T17:03"]}}
+    s = wx.summarize(data)
+    assert (s["sunrise"], s["sunset"]) == (401, 1023)
+    assert wx.minute_of(None) is None and wx.minute_of("garbage") is None
+
+
+@pytest.mark.parametrize("minute,day", [(400, False), (401, True), (720, True), (1022, True), (1023, False)])
+def test_daytime_switches_at_sunrise_and_sunset(minute, day):
+    assert wx.daytime({"sunrise": 401, "sunset": 1023, "is_day": not day}, minute) is day
+
+
+def test_daytime_falls_back_to_the_forecasts_is_day():
+    assert wx.daytime({"is_day": True}, 720) is True  # no sunrise/sunset in an older answer
+    assert wx.daytime({"sunrise": 401, "sunset": 1023, "is_day": True}, None) is True  # clock not set
+    assert wx.daytime(None, 720) is False
+
+
+@pytest.mark.parametrize(
+    "kind,day,sky",
+    [("clear", True, "haze"), ("partly", True, "grey_haze"), ("cloudy", True, "overcast"),
+     ("rain", True, "overcast"), ("fog", True, "overcast"), ("snow", True, "overcast"),
+     ("storm", True, "overcast"), ("unknown", True, "overcast"), ("clear", False, "night"),
+     ("rain", False, "night")],
+)
+def test_sky_by_weather_and_time(kind, day, sky):
+    assert wx.sky(kind, day) == sky
