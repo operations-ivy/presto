@@ -589,7 +589,12 @@ def test_card_remounts_after_an_io_error_not_twice_in_a_row(monkeypatch):
     monkeypatch.setattr(card.time, "ticks_ms", lambda: clock[0], raising=False)
     monkeypatch.setattr(card.time, "ticks_diff", lambda a, b: a - b, raising=False)
     monkeypatch.setattr(card.os, "umount", lambda path: calls.append(("umount", path)), raising=False)
-    monkeypatch.setattr(card, "mount", lambda: calls.append(("mount",)) or True)
+
+    def fake_mount():
+        calls.append(("mount",))
+        return True
+
+    monkeypatch.setattr(card, "mount", fake_mount)
     monkeypatch.setattr(card, "_last", None)
     monkeypatch.setattr(card, "remounts", 0)
     assert not card.failed(ValueError("not the card"))
