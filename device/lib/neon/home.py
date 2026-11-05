@@ -161,7 +161,11 @@ class Home:
         pass
 
     def tap(self, x, y):
-        self.glitch_at = time.ticks_ms()  # tap the sky: make it glitch
+        now = time.ticks_ms()
+        if self.sights.minutes and x >= 130 and y < 150 and self.sights.kind is None:
+            self.sights.trigger(sightings.pick(self.sights.last, random.random()), now)  # summon one
+        else:
+            self.glitch_at = now  # tap the sky: make it glitch
 
     # --- leds ---
     def leds(self, presto, t):
