@@ -16,6 +16,8 @@ resources:
   - web-service.yaml
   - ingress.yaml
   - convert-deployment.yaml
+  - feed-deployment.yaml
+  - feed-service.yaml
   - podmonitor.yaml
   - dashboard-web.yaml
 

@@ -10,6 +10,14 @@ spec:
   - host: presto.brick.nozdormu.cloud
     http:
       paths:
+      # The Brick screen's feed (presto-feed); everything else is the photo page.
+      - path: /brick.json
+        pathType: Exact
+        backend:
+          service:
+            name: presto-feed
+            port:
+              number: 80
       - path: /
         pathType: Prefix
         backend:

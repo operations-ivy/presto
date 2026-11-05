@@ -18,6 +18,7 @@ DEFAULTS = {
     "dark_lux": 3,  # below this: LEDs off, backlight at its floor
     "photo_feed": "https://presto.brick.nozdormu.cloud",  # the upload page; empty: /sd/gallery only
     "feed_minutes": 10,  # how often to look for new photos
+    "brick_feed": "https://presto.brick.nozdormu.cloud/brick.json",  # the Brick screen's uplink; empty: none
     "arm_up": "weather",
     "arm_left": "photos",
     "arm_right": "brick",

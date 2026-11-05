@@ -60,7 +60,57 @@ spec:
     ports:
     - port: 8080
 ---
-# Both pods: out to DNS and the OpenTelemetry collector only. No internet, no
+# The feed: from Traefik (GET /brick.json) and Prometheus' scrape.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: feed-ingress
+  namespace: presto
+spec:
+  podSelector:
+    matchLabels:
+      app: presto-feed
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: traefik
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+    ports:
+    - port: 8080
+---
+# The feed, and only the feed, may ask Prometheus.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: feed-egress-prometheus
+  namespace: presto
+spec:
+  podSelector:
+    matchLabels:
+      app: presto-feed
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+    ports:
+    - port: 9090
+---
+# Every pod: out to DNS and the OpenTelemetry collector only. No internet, no
 # LAN, no other service.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

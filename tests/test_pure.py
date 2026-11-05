@@ -307,3 +307,57 @@ def test_arrows_sit_in_their_tap_bands():
         assert 0 <= x and x1 < 240 and 0 <= y and y1 < 240, way
         # both corners tap through to the arrow's own arm, so all of it does
         assert nav.zone(x, y) == way and nav.zone(x1, y1) == way, way
+
+
+# --- the Brick uplink (presto#5) --------------------------------------------
+from neon import uplink  # noqa: E402
+
+FEED = {
+    "at": 1, "age": 5,
+    "nodes": [{"n": "brick420", "ok": 1, "k8s": 1, "cpu": 3, "mem": 23, "temp": 47},
+              {"n": "brick666", "ok": 0, "k8s": 1},
+              {"n": "brick9000", "ok": 0, "k8s": 0}],
+    "apps": {"n": 21, "bad": [["chucks-wisdom", "OutOfSync", "Healthy"]], "nbad": 1},
+    "pods": {"bad": [["chuck/reader-abc", "CrashLoopBackOff"]], "nbad": 1},
+    "door": {"ok": 1, "e5xx": 0},
+    "temps": [{"n": "Bedroom", "c": 24.6}, {"n": "My ecobee", "c": 22.2}],
+}
+
+
+def test_uplink_cluster_page():
+    lines = uplink.cluster(FEED)
+    text = [t for t, _ in lines]
+    assert text[1] == "  BRICK420    3% 23%  47C"
+    assert ("  BRICK666   NOT READY", uplink.BAD) in lines
+    assert ("  BRICK9000  DOWN", uplink.BAD) in lines
+    assert ("> ARGO  20/21 SYNCED", uplink.BAD) in lines
+    assert ("  CHUCK/READER-ABC    CRASHLOOP", uplink.BAD) in lines
+    assert ("> DOOR  UP", uplink.H) in lines
+
+
+def test_uplink_lines_fit_the_panel():
+    worst = dict(FEED)
+    worst["nodes"] = [{"n": "brick%d" % i, "ok": 1, "k8s": 1, "cpu": 100, "mem": 100, "temp": 100} for i in range(5)]
+    worst["apps"] = {"n": 30, "bad": [["a-very-long-application-name", "OutOfSync", "Degraded"]] * 4, "nbad": 9}
+    worst["pods"] = {"bad": [["namespace/a-very-long-pod-name", "CreateContainerConfigError"]] * 4, "nbad": 9}
+    worst["door"] = {"ok": 1, "e5xx": 12345}
+    lines = uplink.cluster(worst)
+    assert len(lines) <= (204 - 10) // 11  # the Brick panel's rows
+    assert max(len(t) for t, _ in lines) * 6 <= 200 - 8  # 6 px a character at scale 1
+
+
+def test_uplink_rooms_page_converts_and_adds_the_presto():
+    lines = uplink.rooms(FEED, True, 71.04)
+    assert [t for t, _ in lines] == ["> INDOOR", "  BEDROOM        76.3F", "  MY ECOBEE      72.0F", "  PRESTO         71.0F"]
+    assert uplink.rooms({"temps": []}, False)[1][0] == "  NO SENSORS ONLINE"
+
+
+def test_uplink_health_flags_and_stale():
+    assert uplink.health(FEED) == [True, False, False, False, False, True]
+    assert uplink.health(None) == []
+    assert not uplink.stale(FEED, 10) and uplink.stale(FEED, 999) and uplink.stale(dict(FEED, age=999), 10)
+    assert uplink.cluster(None)[1] == ("  NO FEED YET", uplink.BAD)
+
+
+def test_brick_feed_setting():
+    assert conf.load("device/settings.yaml", {})["brick_feed"] == "https://presto.brick.nozdormu.cloud/brick.json"
