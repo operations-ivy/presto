@@ -69,6 +69,8 @@ class Sightings:
         self.next_at = time.ticks_add(time.ticks_ms(), next_gap_ms(minutes, random.random()))
         self.kaiju = sprites.Sprite(sprites.KAIJU)
         self.ufo = sprites.Sprite(sprites.UFO)
+        self.fireball = sprites.Sprite(sprites.FIREBALL)
+        self.balls = []  # x, y of each fireball in flight
         self.emblem = sprites.Sprite(emblem_art(getattr(ctx, "secrets", None)))
         self.emblem_scale = emblem_scale(self.emblem.w, self.emblem.h)
         self.sparks = []  # fireworks: [x, y, dx, dy, life, pen]
@@ -79,7 +81,10 @@ class Sightings:
         self.spot = p.rgb(232, 188, 40)  # the lit oval on the clouds
         self.rim = p.rgb(150, 112, 20)
         self.tractor = p.rgb(20, 70, 50)
-        self.breath = (p.cyan, p.rgb(150, 255, 255), p.cyan_glow)
+        blue, deep = p.rgb(40, 110, 255), p.rgb(20, 50, 150)
+        # its fireball's two flickering frames: core, flame, edge, trail
+        self.ball_pens = ({"W": p.text, "C": p.cyan, "B": blue, "L": deep},
+                          {"W": p.rgb(200, 255, 255), "C": blue, "B": p.cyan, "L": p.cyan_glow})
         self.firework_pens = (p.magenta, p.cyan, p.amber, p.phosphor, p.violet, p.text)
 
     def step(self, now_ms):
@@ -91,7 +96,8 @@ class Sightings:
                 return None
             self.kind = pick(self.last, random.random())
             self.started = now_ms
-            self.sparks, self.rockets = [], []
+            self.sparks, self.rockets, self.balls = [], [], []
+            self.spat = 0
             print("[neon] sighting:", self.kind)
         t = time.ticks_diff(now_ms, self.started) / LENGTH_MS[self.kind]
         if t >= 1:
@@ -103,7 +109,8 @@ class Sightings:
     def trigger(self, kind, now_ms):
         """Start this one now (for trying them out)."""
         self.kind, self.started = kind, now_ms
-        self.sparks, self.rockets = [], []
+        self.sparks, self.rockets, self.balls = [], [], []
+        self.spat = 0
 
     # --- drawing ---
     def back(self, d, now_ms):
@@ -118,7 +125,7 @@ class Sightings:
             getattr(self, "_" + self.kind)(d, now_ms, t, "front")
 
     def _kaiju(self, d, now_ms, t, layer):
-        """It rises behind the city, roars a beam across the sky, and sinks again."""
+        """It rises behind the city, spits two blue fireballs over the rooftops, and sinks again."""
         if layer != "back":
             return
         rise = ease(t / 0.2) if t < 0.8 else ease((1 - t) / 0.2)
@@ -127,14 +134,18 @@ class Sightings:
         p = self.ctx.pens
         blink = {"R": "K"} if (now_ms // 1500) % 7 == 0 else None
         self.kaiju.draw(d, p.letters, x, top, 3, blink)
-        if 0.35 < t < 0.65:  # the roar: a beam from its jaw out over the sky
-            jaw_y = top + 7 * 3
-            core, hot, glow = self.breath
-            reach = int(min(1.0, (t - 0.35) / 0.08) * 120)
-            d.set_pen(glow)
-            d.rectangle(x - reach, jaw_y - 2, reach, 5)
-            d.set_pen(core if (now_ms // 60) % 2 else hot)
-            d.rectangle(x - reach, jaw_y, reach, 2)
+        # at the top of its rise it spits two fireballs from its jaw, no bigger than its head
+        for when in (0.38, 0.52):
+            if t >= when and self.spat < (1 if when < 0.5 else 2):
+                self.spat += 1
+                self.balls.append([x - 20, top + 7 * 3 - 7])
+        pens = self.ball_pens[(now_ms // 80) % 2]
+        for ball in self.balls[:]:
+            ball[0] -= 7
+            if ball[0] < -25:
+                self.balls.remove(ball)
+                continue
+            self.fireball.draw(d, pens, ball[0], ball[1] + int(2 * math.sin(ball[0] / 9)), 2)
 
     def _signal(self, d, now_ms, t, layer):
         """A searchlight comes on in the city and throws the emblem onto the clouds."""

@@ -201,3 +201,13 @@ EMBLEM = (  # the homelab's own sky signal: a brick
     "KKK.KKKKK.KK",
     "KKKKKKKKKKKK",
 )
+
+FIREBALL = (  # the kaiju's blue fireball, flying left: a white-hot core, a flame trail (L)
+    "..BBBB.....",
+    ".BCCCCBB.L.",
+    "BCCWWWCCBLL",
+    "BCWWWWWCBBL",
+    "BCCWWWCCBLL",
+    ".BCCCCBB.L.",
+    "..BBBB.....",
+)
