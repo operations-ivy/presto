@@ -5,8 +5,13 @@ idle_screen: photos
 photo_seconds: 300     # a new photo every 5 minutes
 photo_feed: https://presto.brick.nozdormu.cloud  # the upload page; empty: /sd/gallery only
 feed_minutes: 10       # how often to look for new photos
+plasma_url: http://brick9000:8766/  # the back LEDs mirror plasma's builds and deploys; empty: off
+mirror_level: 1.0      # their brightness while mirroring, 0..1
+brick_feed: https://presto.brick.nozdormu.cloud/brick.json  # the Brick screen's uplink (presto-feed); empty: none
 units: imperial        # imperial (F) or metric (C)
 clock_24h: false       # false: 10:47 PM
+home_align: left       # Home's clock, date and forecast: center or left
+sighting_minutes: 15   # left-aligned Home: a kaiju, the sky signal, fireworks or a UFO this often; 0: none
 utc_offset: -5         # standard time, hours; the forecast's own offset wins once fetched
 dst: us                # us, eu or none
 temp_offset_c: 0.0     # the sensor stick reads warm next to the board: correct it here

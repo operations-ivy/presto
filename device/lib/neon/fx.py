@@ -1,4 +1,4 @@
-"""Effects: neon text, glitch, rain, glyph rain, scanlines. All cheap by design.
+"""Effects: neon text, glitch, glyph drops (Home's rain), glyph rain, scanlines. All cheap by design.
 
 The app runs at 240x240 (the panel doubles it): a clear is 2 ms, an update 9 ms,
 a frame copy 7 ms (at 480x480 they were 45, 24 and 70 ms; measured 2026-11-04).
@@ -41,23 +41,36 @@ def glitch_text(display, pens, s, x, y, scale, amount):
     display.text(s, x + random.randint(-1, 1), y, W, scale)
 
 
-class Rain:
-    """Slanted streaks falling through the scene; density changes with the forecast."""
+class GlyphDrops:
+    """Home's rain as single green glyphs falling from the sky (the user, 2026-11-04);
+    how many fall still follows the forecast. A drop changes glyph now and then, and drags
+    the glyph it was before one line behind it, darker: a short trail."""
 
-    def __init__(self, n=120, top=0, bottom=W):
+    MAX_X = W - 6  # a glyph is 6 px wide
+
+    def __init__(self, n=60, top=0, bottom=W):
         self.top, self.bottom = top, bottom
-        self.drops = [[random.randint(0, 260), random.randint(top, bottom), random.randint(5, 9)] for _ in range(200)]
+        g = len(GLYPHS)
+        # [x, y, speed, glyph, the glyph before it (the trail's)]
+        self.drops = [[random.randint(0, self.MAX_X), random.randint(top, bottom), random.randint(3, 7),
+                       random.randrange(g), random.randrange(g)] for _ in range(200)]
         self.n = n
 
-    def step_draw(self, display, pen_far, pen_near):
+    def step_draw(self, display, pens):
+        """pens: (glyph, trail) pairs for far, near and the fastest drops."""
+        g = len(GLYPHS)
         for i in range(min(self.n, len(self.drops))):
             d = self.drops[i]
             d[1] += d[2]
-            d[0] -= d[2] // 4
             if d[1] > self.bottom:
-                d[0], d[1] = random.randint(0, 270), self.top - random.randint(0, 20)
-            display.set_pen(pen_near if d[2] > 7 else pen_far)
-            display.line(d[0], d[1], d[0] - d[2] // 4, d[1] + d[2] // 2 + 1)
+                d[0], d[1] = random.randint(0, self.MAX_X), self.top - random.randint(0, 30)
+            elif random.random() < 0.06:
+                d[4], d[3] = d[3], random.randrange(g)
+            glyph, trail = pens[2 if d[2] >= 7 else 1 if d[2] >= 5 else 0]
+            display.set_pen(trail)
+            display.character(ord(GLYPHS[d[4]]), d[0], d[1] - 9, 1)  # one line behind
+            display.set_pen(glyph)
+            display.character(ord(GLYPHS[d[3]]), d[0], d[1], 1)
 
 
 class GlyphRain:

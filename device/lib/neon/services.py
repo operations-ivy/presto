@@ -109,7 +109,7 @@ class Clock:
 
 
 class Weather:
-    EVERY_S = 30 * 60
+    EVERY_S = 10 * 60  # a fresher temperature and sky on the desk (was 30 min; the user, 2026-11-04)
     RETRY_S = 5 * 60
 
     def __init__(self, secrets, fahrenheit=True):
@@ -127,7 +127,7 @@ class Weather:
         return self.configured and net.up and time.ticks_diff(time.ticks_ms(), self.next_at) >= 0
 
     def fetch(self, clock):
-        """Blocking for a second or two, every 30 minutes."""
+        """Blocking for a second or two, once per EVERY_S."""
         try:
             import requests
 
@@ -170,11 +170,11 @@ class Room:
         except Exception as e:
             log("ltr559:", repr(e))
         self.temp = self.humidity = self.pressure = self.lux = self.prox = None
-        self._last = -10**9
+        self._last = None  # never read yet (not a fake old tick: ticks wrap, README)
 
     def read(self, every_ms=3000):
         now = time.ticks_ms()
-        if time.ticks_diff(now, self._last) < every_ms:
+        if self._last is not None and time.ticks_diff(now, self._last) < every_ms:
             return
         self._last = now
         if self.bme is not None:

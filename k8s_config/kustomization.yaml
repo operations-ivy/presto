@@ -16,9 +16,11 @@ resources:
   - web-service.yaml
   - ingress.yaml
   - convert-deployment.yaml
+  - feed-deployment.yaml
+  - feed-service.yaml
   - podmonitor.yaml
   - dashboard-web.yaml
 
 images:
   - name: whitepatrick/presto-photos
-    newTag: 0.2.2
+    newTag: 0.3.2

@@ -1,8 +1,9 @@
 import calendar
 import datetime as dt
+import types
 
 import pytest
-from neon import conf, nav, photosync, retry, sprites, tz, wx
+from neon import conf, mirror, nav, photosync, retry, sightings, sprites, tz, uplink, wx
 
 
 # --- tz ------------------------------------------------------------------
@@ -307,3 +308,248 @@ def test_arrows_sit_in_their_tap_bands():
         assert 0 <= x and x1 < 240 and 0 <= y and y1 < 240, way
         # both corners tap through to the arrow's own arm, so all of it does
         assert nav.zone(x, y) == way and nav.zone(x1, y1) == way, way
+
+
+# --- the Brick uplink (presto#5) --------------------------------------------
+
+FEED = {
+    "at": 1,
+    "age": 5,
+    "nodes": [
+        {"n": "brick420", "ok": 1, "k8s": 1, "cpu": 3, "mem": 23, "disk": 46, "temp": 47},
+        {"n": "brick666", "ok": 0, "k8s": 1},
+        {"n": "brick9000", "ok": 0, "k8s": 0},
+    ],
+    "apps": {"n": 21, "bad": [["chucks-wisdom", "OutOfSync", "Healthy"]], "nbad": 1},
+    "pods": {"bad": [["chuck/reader-abc", "CrashLoopBackOff"]], "nbad": 1, "run": 54, "rs": 0},
+    "door": {"ok": 1, "e5xx": 0, "rpm": 216},
+    "jobs": {"n": 16, "bad": [], "nbad": 0, "last": ["build-branches", 175]},
+    "net": {"ok": 1, "dn": 6, "up": 1536},
+    "scrape": {"n": 56, "down": [], "ndown": 0},
+    "temps": [{"n": "Bedroom", "c": 24.6}, {"n": "My ecobee", "c": 22.2}],
+}
+
+
+def test_uplink_cluster_page():
+    lines = uplink.cluster(FEED)
+    text = [t for t, _ in lines]
+    assert text[0] == "> NODES     CPU MEM DSK TEMP"
+    assert text[1] == "  BRICK420   3% 23% 46%  47C"
+    assert ("  BRICK666   NOT READY", uplink.BAD) in lines
+    assert ("  BRICK9000  DOWN", uplink.BAD) in lines
+    assert ("> PODS  54 RUNNING  1 BAD", uplink.BAD) in lines  # one pod crash-looping
+    assert ("  CHUCK/READER-ABC    CRASHLOOP", uplink.BAD) in lines
+    assert ("> ARGO  20/21 SYNCED", uplink.BAD) in lines
+    assert ("> JENKINS  16/16 PASSING", uplink.H) in lines
+    assert ("  LAST BUILD-BRANCHES    3M AGO", uplink.OK) in lines
+    assert ("> DOOR  UP  216 REQ/M", uplink.H) in lines
+    assert ("> NET   DN 6KB/S  UP 1.5MB/S", uplink.H) in lines
+    assert ("> SCRAPE  56/56 UP", uplink.H) in lines
+
+
+def test_uplink_lines_fit_the_panel():
+    worst = dict(FEED)
+    worst["nodes"] = [
+        {"n": "brick%d" % i, "ok": 1, "k8s": 1, "cpu": 100, "mem": 100, "disk": 100, "temp": 100} for i in range(5)
+    ]
+    worst["pods"] = {
+        "bad": [["namespace/a-very-long-pod-name", "CreateContainerConfigError"]] * 4,
+        "nbad": 9,
+        "run": 999,
+        "rs": 999,
+    }
+    worst["apps"] = {"n": 30, "bad": [["a-very-long-application-name", "OutOfSync", "Degraded"]] * 4, "nbad": 9}
+    worst["jobs"] = {
+        "n": 16,
+        "bad": [["a-very-long-jenkins-job", "UNSTABLE"]] * 4,
+        "nbad": 9,
+        "last": ["a-very-long-jenkins-job", 999999],
+    }
+    worst["door"] = {"ok": 1, "e5xx": 12345, "rpm": 99999}
+    worst["net"] = {"ok": 1, "dn": 99999, "up": 99999}
+    worst["scrape"] = {"n": 99, "down": ["a-very-long-scrape-job-name-xyz"] * 4, "ndown": 9}
+    lines = uplink.cluster(worst)
+    assert len(lines) <= uplink.ROWS == (204 - 10) // 11  # the Brick panel's rows
+    assert max(len(t) for t, _ in lines) * 6 <= 200 - 8, max(lines, key=lambda x: len(x[0]))  # 6 px a character
+    assert ("> PODS  999 RUNNING  9 BAD", uplink.BAD) in lines  # trimmed, but counted
+    assert all(s in " ".join(t for t, _ in lines) for s in ("PODS", "ARGO", "JENKINS", "DOOR", "NET", "SCRAPE"))
+
+
+def test_uplink_rooms_page_converts_and_adds_the_presto():
+    lines = uplink.rooms(FEED, True, 71.04)
+    assert [t for t, _ in lines] == [
+        "> INDOOR",
+        "  BEDROOM        76.3F",
+        "  MY ECOBEE      72.0F",
+        "  PRESTO         71.0F",
+    ]
+    assert uplink.rooms({"temps": []}, False)[1][0] == "  NO SENSORS ONLINE"
+
+
+def test_uplink_health_flags_and_stale():
+    assert uplink.health(FEED) == [True, False, False, False, False, True, True, True, True]
+    assert uplink.health(None) == []
+    assert not uplink.stale(FEED, 10) and uplink.stale(FEED, 999) and uplink.stale(dict(FEED, age=999), 10)
+    assert uplink.cluster(None)[1] == ("  NO FEED YET", uplink.BAD)
+
+
+def test_brick_feed_setting():
+    assert conf.load("device/settings.yaml", {})["brick_feed"] == "https://presto.brick.nozdormu.cloud/brick.json"
+
+
+# --- the back LEDs mirror plasma ------------------------------------------
+
+PLASMA = {  # plasma's GET /, as brick-cicd-config's plasma-look serves it
+    "showing": {"source": "board", "pattern": "calm", "priority": 90, "look": {"effect": "pulse", "seconds": 4}},
+    "signals": [
+        {"source": "board", "pattern": "calm", "priority": 90, "look": {"effect": "pulse", "seconds": 4}},
+        {
+            "source": "jenkins-build-image",
+            "pattern": "stage-build",
+            "priority": 50,
+            "look": {"effect": "rainbow", "seconds": 0.75},
+        },
+        {"source": "board-buttons", "pattern": "buttons", "priority": 10, "look": None},
+    ],
+}
+
+
+def test_mirror_picks_the_strongest_signal_with_a_look_but_not_the_boards():
+    assert mirror.pick(PLASMA) == {"effect": "rainbow", "seconds": 0.75}
+    assert mirror.pick({"signals": [PLASMA["signals"][0]]}) is None
+    assert mirror.pick({"signals": []}) is None and mirror.pick(None) is None
+    assert mirror.pick({"signals": [{"source": "old-plasma", "pattern": "x"}]}) is None  # before plasma-look
+
+
+@pytest.mark.parametrize(
+    "effect",
+    [
+        "solid",
+        "pulse",
+        "flash",
+        "chase",
+        "stream",
+        "rush",
+        "scanner",
+        "converge",
+        "fill",
+        "rainbow",
+        "nightly",
+        "boil",
+        "something-new",
+    ],
+)
+@pytest.mark.parametrize("t", [0, 137, 500, 1999])
+def test_mirror_every_effect_gives_seven_dim_colours(effect, t):
+    leds = mirror.frame({"effect": effect, "color": "#00ff00", "seconds": 2}, t, level=0.5)
+    assert len(leds) == 7
+    assert all(0 <= v <= 127 for c in leds for v in c), leds
+
+
+def test_mirror_effects_move():
+    look = {"effect": "chase", "color": "#ffffff", "seconds": 0.7}
+    brightest = [max(range(7), key=lambda i: mirror.frame(look, t)[i][0]) for t in (0, 100, 200)]
+    assert brightest == [0, 1, 2]
+    solid = mirror.frame({"effect": "solid", "color": "#ff8000"}, 0)
+    assert solid[0] == (int(255 * mirror.LEVEL), int(128 * mirror.LEVEL), 0) and len(set(solid)) == 1
+    assert mirror.frame({"effect": "flash", "color": "#ff0000", "seconds": 1}, 600)[0] == (0, 0, 0)
+
+
+def test_mirror_url_and_colours():
+    assert mirror.parse_url("http://brick9000:8766/") == ("brick9000", 8766, "/")
+    assert mirror.parse_url("http://plasma/x") == ("plasma", 80, "/x")
+    assert mirror.parse_colour("#ff8000") == (255, 128, 0) and mirror.parse_colour(None) == (255, 255, 255)
+    assert mirror.hsv(0, 1, 1) == (255, 0, 0) and mirror.hsv(1 / 3, 1, 1)[1] == 255
+
+
+def test_plasma_url_setting():
+    assert conf.load("device/settings.yaml", {})["plasma_url"] == "http://brick9000:8766/"
+
+
+# --- Home's rare sightings ---------------------------------------------------
+
+
+def test_sightings_gap_is_the_average_give_or_take_half():
+    assert sightings.next_gap_ms(15, 0.0) == 450000 and sightings.next_gap_ms(15, 1.0) == 1350000
+    assert sightings.next_gap_ms(15, 0.5) == 900000
+
+
+def test_sightings_never_the_same_twice_running():
+    for last in sightings.KINDS:
+        for r in (0.0, 0.3, 0.6, 0.999, 1.0):
+            k = sightings.pick(last, r)
+            assert k in sightings.KINDS and k != last
+    assert {sightings.pick(None, r / 10) for r in range(10)} == set(sightings.KINDS)
+
+
+def test_sightings_ease():
+    assert sightings.ease(0) == 0 and sightings.ease(1) == 1 and abs(sightings.ease(0.5) - 0.5) < 1e-9
+    assert sightings.ease(-1) == 0 and sightings.ease(2) == 1
+
+
+def test_sky_signal_emblem_from_secrets_or_ours():
+    mine = ("..K..", ".KKK.", "KKKKK")
+    assert sightings.emblem_art(types.SimpleNamespace(EMBLEM=mine)) == mine
+    assert sightings.emblem_art(types.SimpleNamespace()) == sprites.EMBLEM
+    assert sightings.emblem_art(None) == sprites.EMBLEM
+    assert sightings.emblem_art(types.SimpleNamespace(EMBLEM=7)) == sprites.EMBLEM  # not a grid
+    assert sightings.emblem_art(types.SimpleNamespace(EMBLEM=("K" * 99,))) == sprites.EMBLEM  # too wide
+    assert sightings.emblem_scale(12, 7) == 3 and sightings.emblem_scale(30, 12) == 2
+    assert sightings.emblem_scale(30, 20) == 1
+
+
+# --- Home's sky (2026-11-04: haze by day, grey when the weather is, night after sunset) ---
+def test_sunrise_and_sunset_from_the_forecast():
+    data = {"current": {"weather_code": 0, "is_day": 1},
+            "daily": {"sunrise": ["2026-11-04T06:41"], "sunset": ["2026-11-04T17:03"]}}
+    s = wx.summarize(data)
+    assert (s["sunrise"], s["sunset"]) == (401, 1023)
+    assert wx.minute_of(None) is None and wx.minute_of("garbage") is None
+
+
+@pytest.mark.parametrize("minute,day", [(400, False), (401, True), (720, True), (1022, True), (1023, False)])
+def test_daytime_switches_at_sunrise_and_sunset(minute, day):
+    assert wx.daytime({"sunrise": 401, "sunset": 1023, "is_day": not day}, minute) is day
+
+
+def test_daytime_falls_back_to_the_forecasts_is_day():
+    assert wx.daytime({"is_day": True}, 720) is True  # no sunrise/sunset in an older answer
+    assert wx.daytime({"sunrise": 401, "sunset": 1023, "is_day": True}, None) is True  # clock not set
+    assert wx.daytime(None, 720) is False
+
+
+@pytest.mark.parametrize(
+    "kind,day,sky",
+    [("clear", True, "haze"), ("partly", True, "grey_haze"), ("cloudy", True, "overcast"),
+     ("rain", True, "overcast"), ("fog", True, "overcast"), ("snow", True, "overcast"),
+     ("storm", True, "overcast"), ("unknown", True, "overcast"), ("clear", False, "night"),
+     ("rain", False, "night")],
+)
+def test_sky_by_weather_and_time(kind, day, sky):
+    assert wx.sky(kind, day) == sky
+
+
+def test_glyph_rain_draws_n_drops_each_with_its_trail_and_respawns_above():
+    from neon import fx
+
+    class Display:
+        def __init__(self):
+            self.chars = []
+
+        def set_pen(self, pen):
+            self.pen = pen
+
+        def character(self, code, x, y, scale):
+            self.chars.append((chr(code), x, y, self.pen))
+
+    rain = fx.GlyphDrops(n=30, top=-10, bottom=226)
+    pens = (("far", "far-trail"), ("near", "near-trail"), ("head", "head-trail"))
+    for _ in range(200):
+        d = Display()
+        rain.step_draw(d, pens)
+        assert len(d.chars) == 60  # 30 drops, a trail glyph behind each
+        trails, glyphs = d.chars[0::2], d.chars[1::2]
+        for (tc, tx, ty, tpen), (gc, gx, gy, gpen) in zip(trails, glyphs):
+            assert tc in fx.GLYPHS and gc in fx.GLYPHS
+            assert (tx, ty + 9) == (gx, gy) and tpen == gpen + "-trail"  # one line behind, darker
+            assert 0 <= gx <= fx.W - 6 and gy <= 226

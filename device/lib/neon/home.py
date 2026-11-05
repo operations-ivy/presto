@@ -4,11 +4,13 @@ import math
 import random
 import time
 
-from neon import fx, sprites, theme, tz, wx
+from neon import fx, sightings, sprites, theme, tz, wx
 
 W = H = 240  # the Presto at its native speed: 240x240, doubled to the 480 panel
 SKY_BOTTOM = 165
 GROUND = 226
+LEFT = 14  # home_align: left: the text's margin, clear of the left arrow (y 137+)
+SUMMON_X, SUMMON_Y = 130, 150  # left layout: a tap right of this and above that summons a sighting
 ARROW_SCALE = 2
 _AW, _AH = 15 * ARROW_SCALE, 10 * ARROW_SCALE  # sprites.ARROW pointing up: 30x20
 ARROW_AT = {  # top-left corners; left and right sit below the forecast
@@ -54,7 +56,7 @@ class Home:
         print("[neon] signs", [(s[0], s[6], s[7]) for s in self.signs])
         self.stars = [(r(0, W - 1), r(0, SKY_BOTTOM - 70), r(0, 99)) for _ in range(45)]
         random.seed(time.ticks_us())  # everything after this (rain, glitches) differs each boot
-        self.rain = fx.Rain(n=60, top=-10, bottom=GROUND)
+        self.rain = fx.GlyphDrops(n=60, top=-10, bottom=GROUND)
         self.car = sprites.Sprite(sprites.SPINNER)
         self.car_x = None
         self.car_next = time.ticks_add(time.ticks_ms(), 8000)
@@ -81,13 +83,29 @@ class Home:
             }
             for t in range(16)
         ]
-        self.sky_day = [p.rgb(*theme.mix(theme.PALETTE["dust_dark"], theme.PALETTE["dust"], i / 7)) for i in range(8)]
-        self.sky_night = [p.rgb(*theme.mix(theme.PALETTE["night"], (30, 14, 52), i / 7)) for i in range(8)]
+        self.left = ctx.settings.get("home_align") == "left"
+        # rare sightings in the right half of the sky: only with the left-aligned layout
+        minutes = ctx.settings.get("sighting_minutes", 15) if self.left else 0
+        self.sights = sightings.Sightings(ctx, minutes)
+        dust_dark, dust = theme.PALETTE["dust_dark"], theme.PALETTE["dust"]
+        grey_top, grey_low = (44, 44, 52), (104, 102, 110)
+        self.skies = {  # 8 bands each, top to bottom (wx.sky picks one)
+            "haze": [p.rgb(*theme.mix(dust_dark, dust, i / 7)) for i in range(8)],
+            # grey cloud above, the haze showing through low down
+            "grey_haze": [p.rgb(*theme.mix(grey_top, dust, (i / 7) ** 1.6)) for i in range(8)],
+            "overcast": [p.rgb(*theme.mix(grey_top, grey_low, i / 7)) for i in range(8)],
+            "night": [p.rgb(*theme.mix(theme.PALETTE["night"], (30, 14, 52), i / 7)) for i in range(8)],
+        }
+        self.day = False
         self.building_pen = p.rgb(10, 8, 20)
         self.building_edge = p.rgb(24, 18, 44)
         self.win_pens = (p.sodium, p.amber, p.cyan)
-        self.rain_far = p.rgb(40, 60, 90)
-        self.rain_near = p.rgb(90, 130, 170)
+        # the glyph rain: (glyph, its darker trail), dim far away, bright close up
+        self.rain_pens = (
+            (p.phosphor_dim, p.rgb(4, 32, 16)),
+            (p.rgb(30, 170, 90), p.rgb(10, 80, 40)),
+            (p.phosphor, p.rgb(20, 120, 64)),
+        )
         self.entered_at = 0
         self.glitch_at = time.ticks_add(time.ticks_ms(), 20000)
         self.frame = 0
@@ -157,7 +175,11 @@ class Home:
         pass
 
     def tap(self, x, y):
-        self.glitch_at = time.ticks_ms()  # tap the sky: make it glitch
+        now = time.ticks_ms()
+        if self.sights.minutes and x >= SUMMON_X and y < SUMMON_Y and self.sights.kind is None:
+            self.sights.trigger(sightings.pick(self.sights.last, random.random()), now)  # summon one
+        else:
+            self.glitch_at = now  # tap the sky: make it glitch
 
     # --- leds ---
     def leds(self, presto, t):
@@ -171,11 +193,15 @@ class Home:
         ctx, p = self.ctx, self.ctx.pens
         self.frame += 1
         kind = ctx.weather.kind
-        day = bool(ctx.weather.summary and ctx.weather.summary.get("is_day"))
-        hot = ctx.weather.summary and (ctx.weather.summary.get("hi") or 0) >= (85 if ctx.fahrenheit else 29)
+        minute = None
+        if ctx.clock.valid:
+            lt = ctx.clock.now()
+            minute = lt[3] * 60 + lt[4]
+        self.day = wx.daytime(ctx.weather.summary, minute)  # sunrise to sunset at the coordinates
+        sky = wx.sky(kind, self.day)
 
-        # sky: night violet, or 2049 dust when it's a hot day
-        bands = self.sky_day if (day and hot) else self.sky_night
+        # sky: 2049 haze by day (grey when the weather is), violet at night
+        bands = self.skies[sky]
         bh = SKY_BOTTOM // len(bands) + 1
         for i, pen in enumerate(bands):
             d.set_pen(pen)
@@ -184,7 +210,7 @@ class Home:
         d.rectangle(0, SKY_BOTTOM, W, H - SKY_BOTTOM)
 
         # stars on a clear night
-        if kind in ("clear", "partly", "unknown") and not (day and hot):
+        if sky == "night" and kind in ("clear", "partly", "unknown"):
             for sx, sy, ph in self.stars:
                 tw = (self.frame + ph) % 40
                 d.set_pen(p.text if tw < 3 else p.faint)
@@ -192,6 +218,7 @@ class Home:
 
         # the flying car
         self._car(d, p, now_ms)
+        self.sights.back(d, now_ms)  # behind the city
 
         # skyline and windows
         for bx, by, bw, bh_ in self.buildings:
@@ -208,13 +235,14 @@ class Home:
                 d.set_pen(self.win_pens[c])
                 d.rectangle(wx_, wy, 2, 2)
         self._sign(d, p, now_ms)
+        self.sights.front(d, now_ms)  # over the rooftops
         d.set_pen(p.night)
         d.rectangle(0, GROUND, W, H - GROUND)
 
         # rain, as hard as the forecast says
         self.rain.n = wx.RAIN.get(kind, 15)
         if self.rain.n:
-            self.rain.step_draw(d, self.rain_far, self.rain_near)
+            self.rain.step_draw(d, self.rain_pens)
 
         self._clock(d, p, now_ms)
         self._forecast(d, p)
@@ -266,12 +294,15 @@ class Home:
             date = tz.date_line(lt)
         else:
             s, date = "--:--", "SYNCING TIME" if ctx.net.up else "NO SIGNAL"
-        scale = 5
-        x = (W - d.measure_text(s, scale) - (26 if ampm else 0)) // 2
-        y = 30
+        left = self.left
+        # centered: 48 px tall, clear of the top arrow and the forecast; left: 32 px, leaving
+        # the right half of the sky to the sightings
+        scale = 4 if left else 6
+        x = LEFT if left else (W - d.measure_text(s, scale) - (26 if ampm else 0)) // 2
+        y = 26
         if ampm:
             d.set_pen(p.magenta)
-            d.text(ampm, x + d.measure_text(s, scale) + 4, y + 24, W, 2)
+            d.text(ampm, x + d.measure_text(s, scale) + 4, y + 8 * scale - 16, W, 2)  # on the digits' baseline
         since = time.ticks_diff(now_ms, self.entered_at)
         # a neon tube striking for the first second, then a faint hum
         if since < 1100:
@@ -284,18 +315,23 @@ class Home:
                 self.glitch_at = time.ticks_add(now_ms, random.randint(18000, 32000))
         else:
             fx.neon_text(d, p, s, x, y, scale, p.cyan, p.cyan_glow, flicker)
-        fx.centered(d, date, y + 48, 2, p.amber)
+        if left:
+            d.set_pen(p.amber)
+            d.text(date, LEFT, y + 8 * scale + 5, W, 1)  # 63..71
+        else:
+            fx.centered(d, date, y + 8 * scale + 6, 2, p.amber)  # 80..96, above the forecast at 102
 
     def _forecast(self, d, p):
         ctx = self.ctx
         s = ctx.weather.summary
         kind = ctx.weather.kind
-        y = 102
+        left = self.left
+        y = 78 if left else 102
         # the icon: animated, two frames
         alt = (self.frame // 5) % 2
-        ix = 44
+        ix = LEFT if left else 44
         if kind in ("clear", "partly"):
-            self.icons["sun" if s and s.get("is_day") else "moon"].draw(d, p.letters, ix, y, 2)
+            self.icons["sun" if self.day else "moon"].draw(d, p.letters, ix, y, 2)
         else:
             self.icons["cloud"].draw(d, p.letters, ix, y, 2)
             if kind in ("rain", "storm"):
@@ -306,19 +342,21 @@ class Home:
                 self.icons["snow_b" if alt else "snow_a"].draw(d, p.letters, ix, y + 17, 2)
             if kind == "fog":
                 self.icons["fog"].draw(d, p.letters, ix, y + 13, 2)
-        tx = 82
+        tx = ix + 34 if left else ix + 38
+        # the forecast's scale, then each line's y; left: the small font, in ~100 px
+        scale, label_y, room_y, wrap = (1, 11, 21, 100) if left else (2, 19, 30, 158)
         d.set_pen(p.text)
         if not ctx.weather.configured:
-            d.text("SET LATITUDE/", tx, y + 1, 150, 1)
-            d.text("LONGITUDE", tx, y + 10, 150, 1)
+            d.text("SET LATITUDE/", tx, y + 1, wrap, 1)
+            d.text("LONGITUDE", tx, y + 10, wrap, 1)
         else:
-            d.text(wx.line(s, ""), tx, y + 1, 158, 2)
+            d.text(wx.line(s, ""), tx, y + 1, wrap, scale)
             d.set_pen(p.dim)
-            d.text(wx.LABELS.get(kind, "NO DATA"), tx, y + 19, 158, 1)
+            d.text(wx.LABELS.get(kind, "NO DATA"), tx, y + label_y, wrap, 1)
         room = ctx.room
         if room.temp is not None:
             d.set_pen(p.sodium)
-            d.text("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), tx, y + 30, 158, 1)
+            d.text("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), tx, y + room_y, wrap, 1)
 
     def _arms(self, d, p, now_ms):
         # no app names (presto#11): just the four chevrons, fading slowly green <-> black

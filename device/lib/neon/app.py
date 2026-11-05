@@ -10,6 +10,8 @@ DEFAULTS = {
     "photo_seconds": 300,  # a new photo every 5 minutes
     "units": "imperial",
     "clock_24h": False,
+    "home_align": "left",  # Home's clock, date and forecast: left (room for the sightings) or center
+    "sighting_minutes": 15,  # left-aligned Home: a rare sighting this often, on average; 0: none
     "utc_offset": -5,  # standard time, hours (the forecast's own offset wins once it's fetched)
     "dst": "us",  # us, eu or none
     "temp_offset_c": 0.0,  # the sensor stick reads warm next to the board: correct it here
@@ -18,6 +20,9 @@ DEFAULTS = {
     "dark_lux": 3,  # below this: LEDs off, backlight at its floor
     "photo_feed": "https://presto.brick.nozdormu.cloud",  # the upload page; empty: /sd/gallery only
     "feed_minutes": 10,  # how often to look for new photos
+    "brick_feed": "https://presto.brick.nozdormu.cloud/brick.json",  # the Brick screen's uplink; empty: none
+    "plasma_url": "http://brick9000:8766/",  # the back LEDs mirror plasma's builds and deploys; empty: off
+    "mirror_level": 1.0,  # their brightness, 0..1
     "arm_up": "weather",
     "arm_left": "photos",
     "arm_right": "brick",
@@ -54,6 +59,10 @@ def run(presto, secrets):
 
     ctx.feed = photosync.Feed(s["photo_feed"], s["feed_minutes"] * 60)
     ctx.last_touch = time.ticks_ms()
+    from neon import mirror
+
+    ctx.mirror = mirror.Mirror(s["plasma_url"], s["mirror_level"])
+    ctx.dark = False
 
     apps = {c.name: c(ctx) for c in (screens.Weather, screens.Photos, screens.Brick, screens.Fun)}
     ctx.arms = {"up": s["arm_up"], "left": s["arm_left"], "right": s["arm_right"], "down": s["arm_down"]}
@@ -66,8 +75,9 @@ def run(presto, secrets):
     cur.enter()
     last_touch = time.ticks_ms()
     down = None  # (x0, y0, t0, last_x, last_y, two)
-    last_frame = -10**9
+    last_frame = time.ticks_ms()  # the first frame is drawn anyway: cur starts dirty
     last_light = 0
+    last_mirror, was_mirrored = 0, False
     frames, fps_at = 0, time.ticks_ms()
     tab_up = False  # the hidden HOME button is showing
 
@@ -86,7 +96,8 @@ def run(presto, secrets):
         draw(time.ticks_ms())
         presto.update()
         cur.dirty = False
-        cur.leds(presto, time.ticks_ms())
+        if not (ctx.mirror.look or ctx.dark):
+            cur.leds(presto, time.ticks_ms())
         services.log("to %s in %d ms" % (name, time.ticks_diff(time.ticks_ms(), t0)))
 
     def draw(now_ms):
@@ -155,6 +166,14 @@ def run(presto, secrets):
         if time.ticks_diff(now, last_light) > 1000:
             last_light = now
             _light(ctx, presto, cur, now)
+        # the back LEDs: plasma's show while something is building or deploying
+        mirrored = ctx.mirror.step(ctx.net, now)
+        if mirrored and not ctx.dark and time.ticks_diff(now, last_mirror) >= 40:
+            last_mirror = now
+            ctx.mirror.show(presto, now)
+        if was_mirrored and not mirrored and not ctx.dark:
+            cur.leds(presto, now)  # back to the screen's own
+        was_mirrored = mirrored
 
         # --- frame ---
         if tab_up and not plus.revealed(now):  # the HOME button has hidden again
@@ -169,7 +188,7 @@ def run(presto, secrets):
             cur.dirty = False
             last_frame = now
             frames += 1
-            if cur.name == "home":
+            if cur.name == "home" and not (ctx.mirror.look or ctx.dark):
                 cur.leds(presto, now)
         if time.ticks_diff(now, fps_at) > 10000:
             print("[neon] %s %.1f fps" % (cur.name, frames * 1000 / time.ticks_diff(now, fps_at)))
@@ -181,12 +200,12 @@ def _light(ctx, presto, cur, now):
     lux = ctx.room.lux
     if lux is None:
         return
-    dark = lux < ctx.settings["dark_lux"]
+    dark = ctx.dark = lux < ctx.settings["dark_lux"]
     presto.set_backlight(0.12 if dark else max(0.25, min(1.0, lux / 150)))
     if dark:
         for i in range(7):
             presto.set_led_rgb(i, 0, 0, 0)
-    elif cur.name != "home":
+    elif cur.name != "home" and not ctx.mirror.look:
         cur.leds(presto, now)
 
 

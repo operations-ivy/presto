@@ -5,7 +5,7 @@ import os
 import random
 import time
 
-from neon import fx, theme, wx
+from neon import fx, theme, uplink, wx
 
 W = H = 240
 
@@ -241,74 +241,115 @@ class Photos(Screen):
 
 
 class Brick(Screen):
-    """Matrix terminal. The cluster feed isn't built yet: the columns are decorative and
-    the panel shows the Presto itself. Passive only: never beeps or takes over."""
+    """Matrix terminal: the cluster's uplink (presto-feed, presto#5) on two tabs, CLUSTER and
+    ROOMS; tap the screen to switch. A rain column per check stutters red while that check
+    is unhappy. Passive only: never beeps, flashes or takes over."""
 
     name = "brick"
     frame_ms = 90
     led_hue = 0.38
+    X0, Y0, PW, PH = 20, 22, 200, 204  # the panel; the rain shows either side
+    PITCH = 11  # px per line
 
     def __init__(self, ctx):
         super().__init__(ctx)
         self.rain = fx.GlyphRain(cols=16, scale=1, top=0, bottom=H, length=(5, 10))
+        self.uplink = uplink.Uplink(ctx.settings.get("brick_feed"))
+        self.tab = 0
         self.typed = 0
+        self.receiving = False
         self.info, self.info_at = None, 0
 
     def enter(self):
         super().enter()
         self.typed = 0
+        self.uplink.entered(time.ticks_ms())
+
+    def tap(self, x, y):
+        self.tab = (self.tab + 1) % len(uplink.TABS)
+        self.typed = 0  # the new page decodes into place
 
     def tick(self, now_ms):
-        """gc.collect() and the SD card's statvfs take ~200 ms: once every 3 s, and here
-        (the main loop, after a switch), not in draw(), which the switch's static runs."""
+        """The fetch and gc.collect() + statvfs (~200 ms) run here, in the main loop between
+        frames, never in draw(). A fetch first shows RECEIVING for a frame: it stalls ~3 s."""
+        if self.uplink.due(now_ms) and self.ctx.net.up:
+            if not self.receiving:
+                self.receiving = True  # draw RECEIVING first, fetch on the next pass
+                return
+            try:
+                if self.uplink.fetch(now_ms):
+                    flags = uplink.health(self.uplink.data)
+                    for i in range(len(self.rain.cols)):
+                        self.rain.set_health(i, flags[i % len(flags)] if flags else True)
+            finally:
+                self.receiving = False
         if self.info is not None and time.ticks_diff(now_ms, self.info_at) <= 3000:
             return
         gc.collect()
         try:
-            s = os.statvfs("/sd")
-            sd = "%d MB FREE" % (s[0] * s[3] // 1048576)
+            st = os.statvfs("/sd")
+            sd = "%d MB FREE" % (st[0] * st[3] // 1048576)
         except OSError:
             sd = "NOT MOUNTED"
         self.info, self.info_at = (self.ctx.net.info(), gc.mem_free() // 1024, sd), now_ms
+
+    def _this_node(self):
+        if self.info is None:  # the first visit, before tick() has run
+            net, ram, sd = {"host": "...", "ip": "...", "rssi": None}, 0, "..."
+        else:
+            net, ram, sd = self.info
+        return [
+            ("> THIS NODE", uplink.H),
+            ("  HOST  %s" % net["host"], uplink.OK),
+            ("  IP    %s" % (net["ip"] or "NO SIGNAL"), uplink.OK),
+            ("  RSSI  %s" % ("%d dBm" % net["rssi"] if net["rssi"] is not None else "--"), uplink.OK),
+            ("  RAM   %d KB FREE   SD %s" % (ram, sd), uplink.OK),
+            ("  UP    %d MIN" % (time.ticks_ms() // 60000), uplink.OK),
+        ]
 
     def draw(self, d, now_ms):
         ctx, p = self.ctx, self.ctx.pens
         d.set_pen(p.night)
         d.clear()
         self.rain.step_draw(d, p)
-        x0, y0, w, h = 25, 55, 190, 130
+        x0, y0, w, h = self.X0, self.Y0, self.PW, self.PH
         d.set_pen(p.rgb(2, 10, 6))
         d.rectangle(x0, y0, w, h)
         d.set_pen(p.phosphor)
         d.rectangle(x0, y0, w, 1)
         d.rectangle(x0, y0 + h - 1, w, 1)
-        if self.info is None:  # the first visit, before tick() has run
-            net, ram, sd = {"host": "...", "ip": "...", "rssi": None}, 0, "..."
+        # the tabs, above the panel: the current one lit
+        tx = x0
+        for i, t in enumerate(uplink.TABS):
+            d.set_pen(p.phosphor if i == self.tab else p.phosphor_dim)
+            d.text(("[%s]" if i == self.tab else " %s ") % t, tx, 8, W, 1)
+            tx += (len(t) + 3) * 6
+        data, age = self.uplink.data, self.uplink.age_s(now_ms)
+        if self.receiving:
+            d.set_pen(p.amber)
+            d.text("RECEIVING", x0 + w - 54, 8, W, 1)
+        elif uplink.stale(data, age):
+            d.set_pen(p.red)
+            d.text("STALE", x0 + w - 30, 8, W, 1)
+        if self.tab == 0:
+            lines = uplink.cluster(data)
         else:
-            net, ram, sd = self.info
-        lines = [
-            "> BRICK UPLINK",
-            "  FEED  ..... NOT BUILT YET",
-            "> THIS NODE",
-            "  HOST  %s" % net["host"],
-            "  IP    %s" % (net["ip"] or "NO SIGNAL"),
-            "  RSSI  %s" % ("%d dBm" % net["rssi"] if net["rssi"] is not None else "--"),
-            "  RAM   %d KB FREE" % ram,
-            "  SD    %s" % sd,
-            "  UP    %d MIN" % (time.ticks_ms() // 60000),
-        ]
-        self.typed = min(sum(len(x) for x in lines), self.typed + 14)  # text decodes into place
+            temp = ctx.room.temp
+            lines = uplink.rooms(data, ctx.fahrenheit, temp) + [("", uplink.OK)] + self._this_node()
+        lines = lines[: (h - 10) // self.PITCH]
+        pens = {uplink.BAD: p.red, uplink.H: p.phosphor}
+        self.typed = min(sum(len(t) for t, _ in lines), self.typed + 18)  # text decodes into place
         left = self.typed
-        for i, line in enumerate(lines):
+        for i, (line, kind) in enumerate(lines):
             shown = line[: max(0, left)]
             left -= len(line)
             if left < 0 and len(shown) < len(line) and shown:
                 shown = shown[:-1] + random.choice(fx.GLYPHS)
-            d.set_pen(p.phosphor if line.startswith(">") else p.text)
-            d.text(shown, x0 + 7, y0 + 7 + i * 13, w - 10, 1)
+            d.set_pen(pens.get(kind, p.text))
+            d.text(shown, x0 + 6, y0 + 6 + i * self.PITCH, w - 8, 1)
         if (now_ms // 500) % 2:
             d.set_pen(p.phosphor)
-            d.rectangle(x0 + 7, y0 + h - 11, 5, 7)
+            d.rectangle(x0 + 6, y0 + h - 10, 5, 7)
 
 
 class Fun(Screen):
