@@ -20,6 +20,7 @@ DEFAULTS = {
     "feed_minutes": 10,  # how often to look for new photos
     "brick_feed": "https://presto.brick.nozdormu.cloud/brick.json",  # the Brick screen's uplink; empty: none
     "plasma_url": "http://brick9000:8766/",  # the back LEDs mirror plasma's builds and deploys; empty: off
+    "mirror_level": 1.0,  # their brightness, 0..1
     "arm_up": "weather",
     "arm_left": "photos",
     "arm_right": "brick",
@@ -58,7 +59,7 @@ def run(presto, secrets):
     ctx.last_touch = time.ticks_ms()
     from neon import mirror
 
-    ctx.mirror = mirror.Mirror(s["plasma_url"])
+    ctx.mirror = mirror.Mirror(s["plasma_url"], s["mirror_level"])
     ctx.dark = False
 
     apps = {c.name: c(ctx) for c in (screens.Weather, screens.Photos, screens.Brick, screens.Fun)}

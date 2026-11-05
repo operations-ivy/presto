@@ -18,7 +18,7 @@ import time
 N = 7
 POLL_MS = 2000
 TIMEOUT_S = 0.4
-LEVEL = 0.35  # the Presto's LEDs are bright on a desk: a third of plasma's
+LEVEL = 1.0  # full: at a third the user could barely see it (2026-11-04); settings: mirror_level
 IGNORE = ("board",)
 
 
@@ -109,8 +109,9 @@ def parse_url(url):
 
 
 class Mirror:
-    def __init__(self, url):
+    def __init__(self, url, level=LEVEL):
         self.url = url or ""
+        self.level = max(0.0, min(1.0, level))
         self.look = None  # what to play, or None: the screen's own colours
         self.next_at = time.ticks_ms()
         self.addr = None  # resolved once: the router's DNS is slow
@@ -127,7 +128,7 @@ class Mirror:
         return self.look is not None
 
     def show(self, presto, now_ms):
-        for i, (r, g, b) in enumerate(frame(self.look, now_ms)):
+        for i, (r, g, b) in enumerate(frame(self.look, now_ms, level=self.level)):
             presto.set_led_rgb(i, r, g, b)
 
     def _poll(self):

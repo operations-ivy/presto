@@ -406,9 +406,9 @@ def test_mirror_every_effect_gives_seven_dim_colours():
                "rainbow", "nightly", "boil", "something-new"]
     for effect in effects:
         for t in (0, 137, 500, 1999):
-            leds = mirror.frame({"effect": effect, "color": "#00ff00", "seconds": 2}, t)
+            leds = mirror.frame({"effect": effect, "color": "#00ff00", "seconds": 2}, t, level=0.5)
             assert len(leds) == 7, effect
-            assert all(0 <= v <= int(255 * mirror.LEVEL) for c in leds for v in c), (effect, leds)
+            assert all(0 <= v <= 127 for c in leds for v in c), (effect, leds)
 
 
 def test_mirror_effects_move():
