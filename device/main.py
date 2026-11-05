@@ -2,6 +2,14 @@
 # Pimoroni's examples and menu live in /examples on the flash.
 import network
 
+try:  # roll back a Wi-Fi update that didn't run (presto#9); never fatal
+    import ota_boot
+
+    _ota = ota_boot.guard()
+except Exception as e:
+    print("[ota] guard:", repr(e))
+    _ota = None
+
 network.hostname("presto")  # before Presto() makes the WLAN, so DHCP sends our name
 
 import secrets  # noqa: E402  WIFI_SSID, WIFI_PASSWORD; optional LATITUDE, LONGITUDE, SIGNS
@@ -30,4 +38,20 @@ except Exception as e:  # show the crash on screen instead of a frozen frame
     d.text("REPL: Thonny or mpremote. Replug restarts.", 10, 220, 220, 1)
     presto.update()
     sys.print_exception(e)
+    if _ota and _ota.get("status") == "trial":  # a new update crashed: restart, so ota_boot can roll it back
+        import time
+
+        import machine
+
+        d.text("NEW UPDATE: RESTARTING TO ROLL BACK", 10, 200, 220, 1)
+        presto.update()
+        time.sleep(8)
+        try:
+            w = network.WLAN(network.STA_IF)
+            w.disconnect()
+            time.sleep(2)
+            w.active(False)
+        except Exception:
+            pass
+        machine.reset()
     raise

@@ -23,6 +23,8 @@ DEFAULTS = {
     "brick_feed": "https://presto.brick.nozdormu.cloud/brick.json",  # the Brick screen's uplink; empty: none
     "plasma_url": "http://brick9000:8766/",  # the back LEDs mirror plasma's builds and deploys; empty: off
     "mirror_level": 1.0,  # their brightness, 0..1
+    "ota_url": "https://presto.brick.nozdormu.cloud/device",  # updates over Wi-Fi (presto#9); empty: USB only
+    "ota_minutes": 10,  # how often to look for one
     "arm_up": "weather",
     "arm_left": "photos",
     "arm_right": "brick",
@@ -62,6 +64,9 @@ def run(presto, secrets):
     from neon import mirror
 
     ctx.mirror = mirror.Mirror(s["plasma_url"], s["mirror_level"])
+    from neon import ota
+
+    ctx.ota = ota.Updater(s["ota_url"], s["ota_minutes"] * 60)
     ctx.dark = False
 
     apps = {c.name: c(ctx) for c in (screens.Weather, screens.Photos, screens.Brick, screens.Fun)}
@@ -163,6 +168,7 @@ def run(presto, secrets):
             cur.dirty = True
         ctx.room.read()
         ctx.feed.step(ctx.net, last_touch)
+        ctx.ota.step(ctx.net, last_touch, now)
         if time.ticks_diff(now, last_light) > 1000:
             last_light = now
             _light(ctx, presto, cur, now)

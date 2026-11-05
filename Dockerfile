@@ -28,9 +28,11 @@ COPY --from=deps /venv /venv
 ENV VIRTUAL_ENV=/venv PATH=/venv/bin:$PATH PYTHONPATH=/code PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /code
 # An explicit file list: a new module must be added here.
-COPY presto_photos/__init__.py presto_photos/__main__.py presto_photos/feed.py presto_photos/pipeline.py \
-     presto_photos/store.py presto_photos/web.py presto_photos/worker.py /code/presto_photos/
+COPY presto_photos/__init__.py presto_photos/__main__.py presto_photos/device.py presto_photos/feed.py \
+     presto_photos/pipeline.py presto_photos/store.py presto_photos/web.py presto_photos/worker.py /code/presto_photos/
 COPY presto_photos/static/index.html /code/presto_photos/static/
+# The Presto's own code, which the page serves it over Wi-Fi (presto#9, device.py).
+COPY device/ /code/device/
 
 USER 65532:65532
 EXPOSE 8080
