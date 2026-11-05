@@ -10,6 +10,7 @@ DEFAULTS = {
     "photo_seconds": 300,  # a new photo every 5 minutes
     "units": "imperial",
     "clock_24h": False,
+    "home_align": "center",  # Home's clock, date and forecast: center or left
     "utc_offset": -5,  # standard time, hours (the forecast's own offset wins once it's fetched)
     "dst": "us",  # us, eu or none
     "temp_offset_c": 0.0,  # the sensor stick reads warm next to the board: correct it here

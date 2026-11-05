@@ -9,6 +9,7 @@ from neon import fx, sprites, theme, tz, wx
 W = H = 240  # the Presto at its native speed: 240x240, doubled to the 480 panel
 SKY_BOTTOM = 165
 GROUND = 226
+LEFT = 14  # home_align: left: the text's margin, clear of the left arrow (y 137+)
 ARROW_SCALE = 2
 _AW, _AH = 15 * ARROW_SCALE, 10 * ARROW_SCALE  # sprites.ARROW pointing up: 30x20
 ARROW_AT = {  # top-left corners; left and right sit below the forecast
@@ -267,7 +268,8 @@ class Home:
         else:
             s, date = "--:--", "SYNCING TIME" if ctx.net.up else "NO SIGNAL"
         scale = 6  # 48 px tall (was 5): bigger, still clear of the top arrow and the forecast
-        x = (W - d.measure_text(s, scale) - (26 if ampm else 0)) // 2
+        left = ctx.settings.get("home_align") == "left"
+        x = LEFT if left else (W - d.measure_text(s, scale) - (26 if ampm else 0)) // 2
         y = 26
         if ampm:
             d.set_pen(p.magenta)
@@ -284,7 +286,11 @@ class Home:
                 self.glitch_at = time.ticks_add(now_ms, random.randint(18000, 32000))
         else:
             fx.neon_text(d, p, s, x, y, scale, p.cyan, p.cyan_glow, flicker)
-        fx.centered(d, date, y + 8 * scale + 6, 2, p.amber)  # 80..96, above the forecast at 102
+        if left:
+            d.set_pen(p.amber)
+            d.text(date, LEFT, y + 8 * scale + 6, W, 2)
+        else:
+            fx.centered(d, date, y + 8 * scale + 6, 2, p.amber)  # 80..96, above the forecast at 102
 
     def _forecast(self, d, p):
         ctx = self.ctx
@@ -293,7 +299,8 @@ class Home:
         y = 102
         # the icon: animated, two frames
         alt = (self.frame // 5) % 2
-        ix = 44
+        left = ctx.settings.get("home_align") == "left"
+        ix = LEFT if left else 44
         if kind in ("clear", "partly"):
             self.icons["sun" if s and s.get("is_day") else "moon"].draw(d, p.letters, ix, y, 2)
         else:
@@ -306,7 +313,7 @@ class Home:
                 self.icons["snow_b" if alt else "snow_a"].draw(d, p.letters, ix, y + 17, 2)
             if kind == "fog":
                 self.icons["fog"].draw(d, p.letters, ix, y + 13, 2)
-        tx = 82
+        tx = ix + 38
         d.set_pen(p.text)
         if not ctx.weather.configured:
             d.text("SET LATITUDE/", tx, y + 1, 150, 1)

@@ -8,6 +8,7 @@ feed_minutes: 10       # how often to look for new photos
 brick_feed: https://presto.brick.nozdormu.cloud/brick.json  # the Brick screen's uplink (presto-feed); empty: none
 units: imperial        # imperial (F) or metric (C)
 clock_24h: false       # false: 10:47 PM
+home_align: center     # Home's clock, date and forecast: center or left
 utc_offset: -5         # standard time, hours; the forecast's own offset wins once fetched
 dst: us                # us, eu or none
 temp_offset_c: 0.0     # the sensor stick reads warm next to the board: correct it here
