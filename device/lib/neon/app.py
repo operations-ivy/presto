@@ -67,6 +67,7 @@ def run(presto, secrets):
     from neon import ota
 
     ctx.ota = ota.Updater(s["ota_url"], s["ota_minutes"] * 60)
+    services.log("running %s (%s)" % (ctx.ota.version or "unknown", ctx.ota.state.get("status", "no update yet")))
     ctx.dark = False
 
     apps = {c.name: c(ctx) for c in (screens.Weather, screens.Photos, screens.Brick, screens.Fun)}
