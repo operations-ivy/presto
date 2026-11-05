@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,16 +50,20 @@ class Release:
 
 def load(device_dir: Path) -> Release:
     """Every file the Presto should run from device_dir, and a version that changes with any of them."""
-    files = tuple(
-        (p.relative_to(device_dir).as_posix(), p.read_bytes())
-        for p in sorted(device_dir.rglob("*"))
-        if p.is_file() and p.suffix in SUFFIXES and "__pycache__" not in p.parts
-        and p.relative_to(device_dir).as_posix() not in BOOT_FILES and p.name not in NEVER
-    )
+    files = tuple(_served(device_dir))
     return Release(version_of(files), files)
 
 
-def version_of(files) -> str:
+def _served(device_dir: Path):
+    """(path, contents) of every file the Presto gets over Wi-Fi."""
+    for p in sorted(device_dir.rglob("*")):
+        rel = p.relative_to(device_dir).as_posix()
+        if (p.is_file() and p.suffix in SUFFIXES and "__pycache__" not in p.parts
+                and rel not in BOOT_FILES and p.name not in NEVER):
+            yield rel, p.read_bytes()
+
+
+def version_of(files: Iterable[tuple[str, bytes]]) -> str:
     """The first 12 hex of a hash over every path and its hash: the same files, the same version."""
     h = hashlib.sha256()
     for path, body in files:
@@ -66,6 +72,4 @@ def version_of(files) -> str:
 
 
 if __name__ == "__main__":  # tools/deploy: the version a USB deploy installs
-    import sys
-
     print(json.dumps({"version": load(Path(sys.argv[1])).version}))

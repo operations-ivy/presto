@@ -141,7 +141,7 @@ def make_handler(store: Store, release: Release | None = None):
             if path in ("/device/manifest.json", "/device/bundle"):
                 if release is None:
                     return self.json(404, {"error": "no device code in this image"})
-                if path.endswith(".json"):
+                if path == "/device/manifest.json":
                     return self.json(200, release.manifest())
                 return self.send(200, release.bundle(), "application/octet-stream")
             if path in ("/preview", "/master"):

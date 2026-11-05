@@ -15,8 +15,6 @@ Reader, read() and plan() are pure (tested on the laptop); Updater does the I/O.
 
 import binascii
 import hashlib
-import json
-import os
 import time
 
 import ota_boot
@@ -25,8 +23,8 @@ CONFIRM_MS = 60000
 QUIET_MS = 15000  # no TLS connect within this long of a touch (it stalls the screen)
 
 
-def sha256_hex(data):
-    return binascii.hexlify(hashlib.sha256(data).digest()).decode()
+def hexdigest(h):
+    return binascii.hexlify(h.digest()).decode()
 
 
 def file_sha(path):
@@ -40,7 +38,7 @@ def file_sha(path):
                 h.update(chunk)
     except OSError:
         return None
-    return binascii.hexlify(h.digest()).decode()
+    return hexdigest(h)
 
 
 class Reader:
@@ -116,7 +114,7 @@ def read(stream, manifest, wanted, write):
         else:
             for _ in pieces():
                 pass
-        if binascii.hexlify(h.digest()).decode() != f["sha"]:
+        if hexdigest(h) != f["sha"]:
             raise ValueError("bundle: %s doesn't match its hash" % path)
         seen.add(path)
 

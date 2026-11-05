@@ -344,23 +344,28 @@ def test_presto_reports_what_it_shows(site):
     assert code == 200 and len(frame) == 240 * 240 * 2
 
 
-def test_the_presto_s_code_over_http(tmp_path):
+def test_serves_the_device_manifest_and_bundle(tmp_path):
     from presto_photos import device
 
     (tmp_path / "dev" / "lib").mkdir(parents=True)
     (tmp_path / "dev" / "lib" / "a.py").write_text("x = 1\n")
     (tmp_path / "dev" / "main.py").write_text("boot\n")
     rel = device.load(tmp_path / "dev")
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), web.make_handler(Store(tmp_path / "s", limit_bytes=1 << 20), rel))
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    host = "127.0.0.1:%d" % httpd.server_address[1]
-    try:
-        code, body, _ = req(host, "/device/manifest.json")
-        assert code == 200 and json.loads(body) == rel.manifest() and [f["path"] for f in rel.manifest()["files"]] == ["lib/a.py"]
-        code, body, h = req(host, "/device/bundle")
-        assert code == 200 and body == rel.bundle() and h["Content-Type"] == "application/octet-stream"
-    finally:
-        httpd.shutdown()
+    handler = web.make_handler(Store(tmp_path / "s", limit_bytes=1 << 20), rel)
+    with ThreadingHTTPServer(("127.0.0.1", 0), handler) as httpd:
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        host = "127.0.0.1:%d" % httpd.server_address[1]
+        try:
+            code, body, _ = req(host, "/device/manifest.json")
+            assert code == 200
+            assert json.loads(body) == rel.manifest()
+            assert [f["path"] for f in rel.manifest()["files"]] == ["lib/a.py"]  # main.py is never served
+            code, body, h = req(host, "/device/bundle")
+            assert code == 200
+            assert body == rel.bundle()
+            assert h["Content-Type"] == "application/octet-stream"
+        finally:
+            httpd.shutdown()
 
 
 def test_no_device_code_is_a_404(site):

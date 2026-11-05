@@ -23,6 +23,7 @@ class Watchdog:
         self.timeout_ms = timeout_ms
         self.last = time.ticks_ms()
         self.timer = None
+        self._reset = self._ticks = self._diff = None  # bound in start(): the interrupt can't look them up
 
     def start(self):
         import machine
@@ -40,7 +41,7 @@ class Watchdog:
             self.timer.deinit()
             self.timer = None
 
-    def stale(self, now_ms):
+    def stale(self, now_ms):  # _check's test, for tests (the interrupt can't call methods)
         return time.ticks_diff(now_ms, self.last) > self.timeout_ms
 
     def _check(self, _timer):

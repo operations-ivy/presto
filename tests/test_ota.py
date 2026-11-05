@@ -1,5 +1,6 @@
 """Updates over Wi-Fi (presto#9): the server's release, the Presto's updater and rollback."""
 
+import copy
 import io
 import json
 import sys
@@ -66,14 +67,15 @@ class Stream(io.BytesIO):
 def test_bundle_round_trip_writes_only_what_changed(tmp_path):
     rel = make_device(tmp_path, {"lib/neon/app.py": "x = 1\n" * 500, "settings.yaml": "a: 1\n"})
     got = {}
-    ota.read(Stream(rel.bundle()), rel.manifest(), {"lib/neon/app.py"}, lambda p, pieces: got.update({p: b"".join(pieces)}))
+    keep = lambda p, pieces: got.update({p: b"".join(pieces)})  # noqa: E731
+    ota.read(Stream(rel.bundle()), rel.manifest(), {"lib/neon/app.py"}, keep)
     assert got == {"lib/neon/app.py": dict(rel.files)["lib/neon/app.py"]}
 
 
 def test_a_bad_hash_or_version_is_refused(tmp_path):
     rel = make_device(tmp_path, {"settings.yaml": "a: 1\n"})
     m = rel.manifest()
-    bad = json.loads(json.dumps(m))
+    bad = copy.deepcopy(m)
     bad["files"][0]["sha"] = "0" * 64
     with pytest.raises(ValueError, match="hash"):
         ota.read(Stream(rel.bundle()), bad, {"settings.yaml"}, lambda p, pieces: list(pieces))
@@ -124,7 +126,8 @@ def updater_for(root, rel, monkeypatch):
 
 
 def test_the_app_only_writes_the_sd_card_and_boot_installs(tmp_path, monkeypatch):
-    root = flash_with(tmp_path, {"lib/neon/app.py": "old app", "settings.yaml": "same"}, {"version": "v1", "status": "ok"})
+    before = {"lib/neon/app.py": "old app", "settings.yaml": "same"}
+    root = flash_with(tmp_path, before, {"version": "v1", "status": "ok"})
     rel = make_device(tmp_path, {"lib/neon/app.py": "new app", "settings.yaml": "same", "lib/neon/new.py": "added"})
     up, restarts = updater_for(root, rel, monkeypatch)
     assert up.check() is True and restarts == [1]

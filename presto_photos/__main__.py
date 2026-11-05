@@ -10,6 +10,7 @@
 
 import os
 import sys
+from pathlib import Path
 
 import brick_observe
 
@@ -31,8 +32,6 @@ def main(argv=None) -> None:
     store = Store(os.environ.get("PHOTOS_ROOT", "/data"), int(float(os.environ.get("PHOTOS_LIMIT_GB", "5")) * (1 << 30)))
     if mode == "web":
         from . import web
-
-        from pathlib import Path
 
         from . import device
 

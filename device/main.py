@@ -51,7 +51,7 @@ except Exception as e:  # show the crash on screen instead of a frozen frame
             w.disconnect()
             time.sleep(2)
             w.active(False)
-        except Exception:
+        except Exception:  # best effort: it resets either way
             pass
         machine.reset()
     raise

@@ -46,7 +46,7 @@ def write_json(path, value):
     tmp = path + ".new"
     with open(tmp, "w") as f:
         json.dump(value, f)
-    remove(path)
+    remove(path)  # FAT (the SD card) won't rename over an existing file
     os.rename(tmp, path)
 
 
@@ -75,7 +75,7 @@ def makedirs(path):
         if not is_dir(part):
             try:
                 os.mkdir(part)
-            except OSError:
+            except OSError:  # a real failure (a full card) shows at the open() that follows
                 pass
 
 
