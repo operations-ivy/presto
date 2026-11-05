@@ -84,6 +84,9 @@ Things that have bitten (details in homelab-context `docs/hosts.md`):
 - **mpremote stops the running app**, and the screen keeps its last frame.
   Use plain `mpremote connect` (it soft-resets first): `resume` against a
   running app stalled the USB serial more than once.
+- **Reset while joined, and the next boot's Wi-Fi join fails** (status -1): the
+  router turns it away for a while. `tools/deploy` disconnects first; after an
+  unplug the app's retry (`neon/retry.py`) has it back in ~20-30 s.
 - **Speed** (full_res): a full clear is 45 ms and a full update 24 ms, so a
   full repaint runs at about 10 fps; Home measures 9-10 fps.
 

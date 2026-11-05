@@ -30,4 +30,13 @@ done < <(find "$dev" -type f \( -name '*.py' -o -name '*.yaml' \) | sort)
 
 "$mpr" connect "$port" "${args[@]}"
 echo "deploy: copied; restarting"
-"$mpr" connect "$port" exec "import machine; machine.reset()" >/dev/null 2>&1 || true
+# Leave Wi-Fi cleanly first: reset while still joined, and the router turns the
+# next boot's join away for a while (status -1; 4-8 of 8 boots, against 0 of 8
+# after a disconnect, 2026-11-04, presto#18).
+"$mpr" connect "$port" exec "import network, time, machine
+w = network.WLAN(network.STA_IF)
+w.disconnect()
+time.sleep(2)
+w.active(False)
+time.sleep(1)
+machine.reset()" >/dev/null 2>&1 || true
