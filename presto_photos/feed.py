@@ -43,6 +43,10 @@ NODE_JOBS = 'job=~"node-exporter|brick9000-node|brick1982-node"'
 QUERIES = {
     "ready": 'kube_node_status_condition{condition="Ready",status="true"}',
     "host_up": 'up{job=~"brick9000-node|brick1982-node"}',
+    # maintenance windows (brick-cicd-config's maintenance-window job): a node in one, and
+    # what runs on it, shows calm, never red. Its end as unix time, +Inf for no end.
+    "maint": "brick_maintenance_until_seconds > time()",
+    "pod_nodes": "kube_pod_info",
     "uname": f"node_uname_info{{{NODE_JOBS}}}",
     "cpu": f'100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{{{NODE_JOBS},mode="idle"}}[2m])))',
     "mem": f"100 * (1 - node_memory_MemAvailable_bytes{{{NODE_JOBS}}} / node_memory_MemTotal_bytes{{{NODE_JOBS}}})",
@@ -112,12 +116,20 @@ def sensor_name(friendly: str) -> str:
 def build(r: dict[str, list[tuple[dict, float]]], now: float) -> dict:
     """The feed from the QUERIES' results (pure: tested without Prometheus)."""
     names = {m["instance"]: m.get("nodename", m["instance"]) for m, _ in r["uname"]}
+    maint = {m["node"]: v for m, v in r["maint"] if "node" in m}
+    resting = {(m.get("namespace"), m.get("pod")) for m, _ in r["pod_nodes"] if m.get("node") in maint}
+
+    def on_resting(namespace, workload):  # a pod of this workload runs on a node in maintenance
+        return any(ns == namespace and pod.startswith(workload + "-") for ns, pod in resting)
+
     nodes: dict[str, dict] = {}
     for m, v in r["ready"]:
         nodes[m["node"]] = {"n": m["node"], "ok": int(v == 1), "k8s": 1}
     for m, v in r["host_up"]:
         n = names.get(m["instance"], m["instance"])
         nodes[n] = {"n": n, "ok": int(v == 1), "k8s": 0}
+    for n, end in maint.items():  # seconds left, or -1 for no end; a host that's off shows too
+        nodes.setdefault(n, {"n": n, "ok": 0, "k8s": 0})["maint"] = -1 if end == float("inf") else max(0, int(end - now))
     for key in ("cpu", "mem", "disk", "temp"):
         for m, v in r[key]:
             n = names.get(m.get("instance"), m.get("instance"))
@@ -134,8 +146,10 @@ def build(r: dict[str, list[tuple[dict, float]]], now: float) -> dict:
     pods = [
         [f"{m['namespace']}/{m.get('deployment') or m.get('statefulset')}", f"{int(v)} NOT READY"]
         for m, v in r["unavailable"] + r["unready_sts"]
+        if not on_resting(m["namespace"], m.get("deployment") or m.get("statefulset") or "")
     ]
-    pods += [[f"{m['namespace']}/{m['pod']}", m["reason"]] for m, _ in r["stuck"]]
+    pods += [[f"{m['namespace']}/{m['pod']}", m["reason"]] for m, _ in r["stuck"]
+             if (m["namespace"], m["pod"]) not in resting]
 
     door_up = any(v == 1 for _, v in r["door_up"])
     errors = round(sum(v for _, v in r["door_5xx"]))
@@ -145,7 +159,11 @@ def build(r: dict[str, list[tuple[dict, float]]], now: float) -> dict:
     newest = max(((v, m.get("jenkins_job", "?")) for m, v in r["job_start"]), default=None)
     last = [newest[1], max(0, int(now - newest[0] / 1000))] if newest else None
 
-    down = sorted(m.get("job", "?") for m, _ in r["targets_down"])
+    down = sorted(
+        m.get("job", "?") for m, _ in r["targets_down"]
+        if names.get(m.get("instance", ""), m.get("instance", "").split(":")[0]) not in maint
+        and (m.get("namespace"), m.get("pod")) not in resting
+    )
     rates = {("dn" if "download" in m.get("entity", "") else "up"): round(v) for m, v in r["rates"]}
     net = {"ok": int(any(v == 1 for _, v in r["wan"])), **rates} if r["wan"] else None
 
