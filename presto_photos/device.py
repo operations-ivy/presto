@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 BOOT_FILES = frozenset({"main.py", "ota_boot.py"})
+NEVER = frozenset({"secrets.py"})  # Wi-Fi, coordinates, the signs: never in git, never served, even if a build has it
 SUFFIXES = (".py", ".yaml")
 
 
@@ -51,7 +52,7 @@ def load(device_dir: Path) -> Release:
         (p.relative_to(device_dir).as_posix(), p.read_bytes())
         for p in sorted(device_dir.rglob("*"))
         if p.is_file() and p.suffix in SUFFIXES and "__pycache__" not in p.parts
-        and p.relative_to(device_dir).as_posix() not in BOOT_FILES
+        and p.relative_to(device_dir).as_posix() not in BOOT_FILES and p.name not in NEVER
     )
     return Release(version_of(files), files)
 

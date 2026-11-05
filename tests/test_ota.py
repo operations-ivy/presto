@@ -36,6 +36,7 @@ def make_device(tmp_path, files):
 # --- the server -------------------------------------------------------------
 def test_release_skips_the_boot_files_and_caches(tmp_path):
     rel = make_device(tmp_path, {"main.py": "boot", "ota_boot.py": "guard", "settings.yaml": "a: 1",
+                                 "secrets.py": "WIFI_PASSWORD = 'x'", "lib/secrets.py": "no",
                                  "lib/neon/app.py": "x = 1", "lib/neon/__pycache__/app.mpy": "junk"})
     assert [p for p, _ in rel.files] == ["lib/neon/app.py", "settings.yaml"]
 
