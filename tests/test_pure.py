@@ -411,4 +411,5 @@ def test_sky_signal_emblem_from_secrets_or_ours():
     assert sightings.emblem_art(None) == sprites.EMBLEM
     assert sightings.emblem_art(types.SimpleNamespace(EMBLEM=7)) == sprites.EMBLEM  # not a grid
     assert sightings.emblem_art(types.SimpleNamespace(EMBLEM=("K" * 99,))) == sprites.EMBLEM  # too wide
-    assert sightings.emblem_scale(12, 7) == 3 and sightings.emblem_scale(28, 12) == 1
+    assert sightings.emblem_scale(12, 7) == 3 and sightings.emblem_scale(30, 12) == 2
+    assert sightings.emblem_scale(30, 20) == 1

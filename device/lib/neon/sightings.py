@@ -43,8 +43,16 @@ def emblem_art(secrets):
 
 
 def emblem_scale(w, h):
-    """As big as fits in the spotlight (~44 x 30 px), up to 3."""
-    return max(1, min(3, 44 // w, 30 // h))
+    """As big as fits the spotlight's oval (~64 x 30 px inside), up to 3."""
+    return max(1, min(3, 64 // w, 30 // h))
+
+
+def oval(d, pen, cx, cy, rx, ry):
+    """A filled ellipse, a run a row (PicoGraphics has circles, not ellipses)."""
+    d.set_pen(pen)
+    for dy in range(-ry, ry + 1):
+        half = int(rx * math.sqrt(max(0.0, 1 - (dy / ry) ** 2)))
+        d.rectangle(cx - half, cy + dy, 2 * half + 1, 1)
 
 
 def ease(t):
@@ -66,9 +74,10 @@ class Sightings:
         self.sparks = []  # fireworks: [x, y, dx, dy, life, pen]
         self.rockets = []  # [x, y, dy, burst_y, pen]
         p = ctx.pens
-        self.beam = p.rgb(46, 44, 30)  # a searchlight through haze
-        self.beam_hi = p.rgb(90, 86, 52)
-        self.spot = p.rgb(150, 140, 80)
+        self.beam = p.rgb(64, 52, 16)  # a golden searchlight through haze
+        self.beam_hi = p.rgb(120, 98, 30)
+        self.spot = p.rgb(232, 188, 40)  # the lit oval on the clouds
+        self.rim = p.rgb(150, 112, 20)
         self.tractor = p.rgb(20, 70, 50)
         self.breath = (p.cyan, p.rgb(150, 255, 255), p.cyan_glow)
         self.firework_pens = (p.magenta, p.cyan, p.amber, p.phosphor, p.violet, p.text)
@@ -134,17 +143,18 @@ class Sightings:
         on = min(1.0, t / 0.15) if t < 0.85 else (1 - t) / 0.15
         if on <= 0 or (t < 0.15 and random.random() < 0.3):  # the lamp striking
             return
-        sx, sy = 196, GROUND - 30  # the lamp, behind the buildings
-        cx, cy = 168 + int(6 * math.sin(now_ms / 1700)), 52  # the spot on the clouds
+        sx, sy = 206, GROUND - 30  # the lamp, behind the buildings
+        cx, cy = 192 + int(3 * math.sin(now_ms / 1700)), 48  # the spot on the clouds: clear of AM/PM
         d.set_pen(self.beam)
         for k in range(-9, 10, 2):  # a fan of faint lines: a beam through haze
             d.line(sx, sy, cx + k * 3, cy + 6)
         d.set_pen(self.beam_hi)
         d.line(sx, sy, cx, cy + 6)
-        d.set_pen(self.spot)
-        d.circle(cx, cy, 24)
         k = self.emblem_scale
-        self.emblem.draw(d, self.ctx.pens.letters, cx - self.emblem.w * k // 2, cy - self.emblem.h * k // 2, k)
+        ew, eh = self.emblem.w * k, self.emblem.h * k
+        oval(d, self.rim, cx, cy, ew // 2 + 9, eh // 2 + 8)
+        oval(d, self.spot, cx, cy, ew // 2 + 7, eh // 2 + 6)
+        self.emblem.draw(d, self.ctx.pens.letters, cx - ew // 2, cy - eh // 2, k)
 
     def _fireworks(self, d, now_ms, t, layer):
         """Rockets from behind the city; each bursts into a falling ring of sparks."""
