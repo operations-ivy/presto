@@ -181,6 +181,16 @@ def test_arrow_levels_stay_in_range(pulse, t):
     assert all(0.0 <= nav.arrow_level(pulse, t, i) <= 1.0 for i in range(4))
 
 
+def test_faint_is_hardly_a_pulse():
+    levels = [nav.arrow_level("faint", t, 0) for t in range(0, 12000, 100)]
+    assert max(levels) - min(levels) <= 0.2 and max(levels) <= 0.5
+    assert len({nav.arrow_level("faint", 5000, i) for i in range(4)}) == 1  # all four together
+
+
+def test_the_arrow_is_small():
+    assert sprites.size(sprites.ARROW) == (9, 5)
+
+
 def test_the_chase_runs_clockwise():
     step = nav.CHASE_STEP_MS
     brightest = [max(range(4), key=lambda i: nav.arrow_level("chase", t, i)) for t in (0, step, 2 * step, 3 * step)]
@@ -197,7 +207,7 @@ def test_the_blink_is_twice_then_rest(t, lit):
 
 
 def test_arrow_pulse_setting():
-    assert conf.load("device/settings.yaml", {})["arrow_pulse"] == "chase"
+    assert conf.load("device/settings.yaml", {})["arrow_pulse"] == "faint"
 
 
 def test_taps_open_apps_and_come_home():

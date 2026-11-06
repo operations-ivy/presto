@@ -13,7 +13,7 @@ DEFAULTS = {
     "home_sky": "night",  # Home's sky: night always, or "daylight" (2049 haze from sunrise to sunset)
     "home_align": "left",  # Home's clock, date and forecast: left (room for the sightings) or center
     "sighting_minutes": 15,  # left-aligned Home: a rare sighting this often, on average; 0: none
-    "arrow_pulse": "chase",  # Home's arrows: chase, blink or breathe
+    "arrow_pulse": "faint",  # Home's arrows: faint, chase, blink or breathe
     "utc_offset": -5,  # standard time, hours (the forecast's own offset wins once it's fetched)
     "dst": "us",  # us, eu or none
     "temp_offset_c": 0.0,  # the sensor stick reads warm next to the board: correct it here
@@ -205,7 +205,7 @@ def run(presto, secrets):
                 if cur.name == "home" and ctx.lamp_rgb is None and not ctx.dark:
                     cur.leds(presto, now)
             if time.ticks_diff(now, fps_at) > 10000:
-                print("[neon] {} {:.1f} fps".format(cur.name, frames * 1000 / time.ticks_diff(now, fps_at)))
+                print(f"[neon] {cur.name} {frames * 1000 / time.ticks_diff(now, fps_at):.1f} fps")
                 frames, fps_at = 0, now
             time.sleep_ms(5)
     finally:
