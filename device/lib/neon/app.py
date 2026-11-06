@@ -74,7 +74,16 @@ def run(presto, secrets):
     ctx.hue = hue.Hue(s["ha_url"], getattr(secrets, "HA_TOKEN", ""), entities)
     ctx.lamp_rgb = None  # the back LEDs' colour while they follow the light; None: the screen's own
     leds_floor = s["leds_floor"]
-    ctx.ota = ota.Updater(s["ota_url"], s["ota_minutes"] * 60)
+    ctx.ota_shown = False
+
+    def ota_show(frac):
+        """The update's LED show (ota.leds), bright; not in a dark room: updates come at night too."""
+        ctx.ota_shown = True
+        if not ctx.dark:
+            for i, rgb in enumerate(ota.leds(frac, time.ticks_ms())):
+                presto.set_led_rgb(i, *rgb)
+
+    ctx.ota = ota.Updater(s["ota_url"], s["ota_minutes"] * 60, show=ota_show)
     services.log("running {} ({})".format(ctx.ota.version or "unknown", ctx.ota.state.get("status", "no update yet")))
     ctx.dark = False
 
@@ -183,6 +192,10 @@ def run(presto, secrets):
             ctx.room.read()
             ctx.feed.step(ctx.net, last_touch)
             ctx.ota.step(ctx.net, last_touch, now)
+            if ctx.ota_shown:  # a download that didn't end in a restart: the LEDs come back
+                ctx.ota_shown, ctx.lamp_rgb = False, None
+                if not ctx.dark:
+                    cur.leds(presto, now)
             if time.ticks_diff(now, last_light) > 1000:
                 last_light = now
                 _light(ctx, presto, cur, now)
