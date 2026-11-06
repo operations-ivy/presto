@@ -12,7 +12,7 @@ except Exception as e:
 
 network.hostname("presto")  # before Presto() makes the WLAN, so DHCP sends our name
 
-import secrets  # noqa: E402  WIFI_SSID, WIFI_PASSWORD; optional LATITUDE, LONGITUDE, SIGNS
+import secrets  # noqa: E402  WIFI_SSID, WIFI_PASSWORD; optional LATITUDE, LONGITUDE, SIGNS, HA_TOKEN
 
 from presto import Presto  # noqa: E402
 

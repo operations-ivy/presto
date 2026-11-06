@@ -3,7 +3,7 @@ import datetime as dt
 import types
 
 import pytest
-from neon import card, conf, mirror, nav, photosync, retry, sightings, sprites, tz, uplink, wx
+from neon import card, conf, hue, nav, photosync, retry, sightings, sprites, tz, uplink, wx
 
 
 # --- tz ------------------------------------------------------------------
@@ -121,6 +121,7 @@ def test_repo_settings_parse():
     text = (Path(__file__).resolve().parents[1] / "device" / "settings.yaml").read_text()
     s = conf.parse(text)
     assert s["arm_left"] == "photos" and s["utc_offset"] == -5 and s["dst"] == "us"
+    assert s["arm_down"] == "lights" and s["lights"] == "light.lamp"
 
 
 # --- wx ------------------------------------------------------------------
@@ -397,73 +398,27 @@ def test_brick_feed_setting():
     assert conf.load("device/settings.yaml", {})["brick_feed"] == "https://presto.brick.nozdormu.cloud/brick.json"
 
 
-# --- the back LEDs mirror plasma ------------------------------------------
-
-PLASMA = {  # plasma's GET /, as brick-cicd-config's plasma-look serves it
-    "showing": {"source": "board", "pattern": "calm", "priority": 90, "look": {"effect": "pulse", "seconds": 4}},
-    "signals": [
-        {"source": "board", "pattern": "calm", "priority": 90, "look": {"effect": "pulse", "seconds": 4}},
-        {
-            "source": "jenkins-build-image",
-            "pattern": "stage-build",
-            "priority": 50,
-            "look": {"effect": "rainbow", "seconds": 0.75},
-        },
-        {"source": "board-buttons", "pattern": "buttons", "priority": 10, "look": None},
-    ],
-}
+# --- the back LEDs follow the lamp ------------------------------------------
 
 
-def test_mirror_picks_the_strongest_signal_with_a_look_but_not_the_boards():
-    assert mirror.pick(PLASMA) == {"effect": "rainbow", "seconds": 0.75}
-    assert mirror.pick({"signals": [PLASMA["signals"][0]]}) is None
-    assert mirror.pick({"signals": []}) is None and mirror.pick(None) is None
-    assert mirror.pick({"signals": [{"source": "old-plasma", "pattern": "x"}]}) is None  # before plasma-look
+def test_leds_follow_the_lamp_by_default():
+    s = conf.load("device/settings.yaml", {})
+    assert s["leds_light"] == "light.lamp" and s["leds_floor"] == 0.6
+    assert "plasma_url" not in s
 
 
-@pytest.mark.parametrize(
-    "effect",
-    [
-        "solid",
-        "pulse",
-        "flash",
-        "chase",
-        "stream",
-        "rush",
-        "scanner",
-        "converge",
-        "fill",
-        "rainbow",
-        "nightly",
-        "boil",
-        "something-new",
-    ],
-)
-@pytest.mark.parametrize("t", [0, 137, 500, 1999])
-def test_mirror_every_effect_gives_seven_dim_colours(effect, t):
-    leds = mirror.frame({"effect": effect, "color": "#00ff00", "seconds": 2}, t, level=0.5)
-    assert len(leds) == 7
-    assert all(0 <= v <= 127 for c in leds for v in c), leds
-
-
-def test_mirror_effects_move():
-    look = {"effect": "chase", "color": "#ffffff", "seconds": 0.7}
-    brightest = [max(range(7), key=lambda i: mirror.frame(look, t)[i][0]) for t in (0, 100, 200)]
-    assert brightest == [0, 1, 2]
-    solid = mirror.frame({"effect": "solid", "color": "#ff8000"}, 0)
-    assert solid[0] == (int(255 * mirror.LEVEL), int(128 * mirror.LEVEL), 0) and len(set(solid)) == 1
-    assert mirror.frame({"effect": "flash", "color": "#ff0000", "seconds": 1}, 600)[0] == (0, 0, 0)
-
-
-def test_mirror_url_and_colours():
-    assert mirror.parse_url("http://brick9000:8766/") == ("brick9000", 8766, "/")
-    assert mirror.parse_url("http://plasma/x") == ("plasma", 80, "/x")
-    assert mirror.parse_colour("#ff8000") == (255, 128, 0) and mirror.parse_colour(None) == (255, 255, 255)
-    assert mirror.hsv(0, 1, 1) == (255, 0, 0) and mirror.hsv(1 / 3, 1, 1)[1] == 255
-
-
-def test_plasma_url_setting():
-    assert conf.load("device/settings.yaml", {})["plasma_url"] == "http://brick9000:8766/"
+def test_led_rgb_is_none_until_the_light_is_known():
+    h = hue.Hue("http://brick2000:8123", "tok", ["light.lamp"])
+    assert h.led_rgb("light.lamp") is None
+    h.lights["light.lamp"] = hue.parse_state("light.lamp", {"state": "off", "attributes": {}})
+    assert h.led_rgb("light.lamp") == (0, 0, 0)
+    h.lights["light.lamp"] = hue.parse_state(
+        "light.lamp", {"state": "on", "attributes": {"brightness": 13, "rgb_color": [255, 137, 14]}}
+    )
+    r, g, b = h.led_rgb("light.lamp", floor=0.6)
+    assert r >= int(0.6 * 255) and r > g > b  # a 5 % night light still shows, warm
+    h.lights["light.lamp"] = None  # unavailable
+    assert h.led_rgb("light.lamp") is None
 
 
 # --- Home's rare sightings ---------------------------------------------------
@@ -500,8 +455,10 @@ def test_sky_signal_emblem_from_secrets_or_ours():
 
 # --- Home's sky (2026-11-04: haze by day, grey when the weather is, night after sunset) ---
 def test_sunrise_and_sunset_from_the_forecast():
-    data = {"current": {"weather_code": 0, "is_day": 1},
-            "daily": {"sunrise": ["2026-11-04T06:41"], "sunset": ["2026-11-04T17:03"]}}
+    data = {
+        "current": {"weather_code": 0, "is_day": 1},
+        "daily": {"sunrise": ["2026-11-04T06:41"], "sunset": ["2026-11-04T17:03"]},
+    }
     s = wx.summarize(data)
     assert (s["sunrise"], s["sunset"]) == (401, 1023)
     assert wx.minute_of(None) is None and wx.minute_of("garbage") is None
@@ -520,10 +477,18 @@ def test_daytime_falls_back_to_the_forecasts_is_day():
 
 @pytest.mark.parametrize(
     "kind,day,sky",
-    [("clear", True, "haze"), ("partly", True, "grey_haze"), ("cloudy", True, "overcast"),
-     ("rain", True, "overcast"), ("fog", True, "overcast"), ("snow", True, "overcast"),
-     ("storm", True, "overcast"), ("unknown", True, "overcast"), ("clear", False, "night"),
-     ("rain", False, "night")],
+    [
+        ("clear", True, "haze"),
+        ("partly", True, "grey_haze"),
+        ("cloudy", True, "overcast"),
+        ("rain", True, "overcast"),
+        ("fog", True, "overcast"),
+        ("snow", True, "overcast"),
+        ("storm", True, "overcast"),
+        ("unknown", True, "overcast"),
+        ("clear", False, "night"),
+        ("rain", False, "night"),
+    ],
 )
 def test_sky_by_weather_and_time(kind, day, sky):
     assert wx.sky(kind, day) == sky
@@ -568,14 +533,16 @@ def test_sync_survives_a_card_error(monkeypatch):
     monkeypatch.setattr(photosync.time, "ticks_add", lambda a, b: a + b, raising=False)
     remounted = []
     monkeypatch.setattr(card, "failed", remounted.append)
-    assert feed.step(types.SimpleNamespace(up=True), -10**6) is False
+    assert feed.step(types.SimpleNamespace(up=True), -(10**6)) is False
     assert [e.args for e in remounted] == [(5,)]  # the card is remounted for the retry
     assert feed.queue == [] and feed.dl is None
 
 
 def test_uplink_maintenance_is_calm():
-    data = dict(FEED, nodes=[{"n": "brick666", "ok": 0, "k8s": 1, "maint": 7200},
-                             {"n": "brick1982", "ok": 0, "k8s": 0, "maint": -1}])
+    data = dict(
+        FEED,
+        nodes=[{"n": "brick666", "ok": 0, "k8s": 1, "maint": 7200}, {"n": "brick1982", "ok": 0, "k8s": 0, "maint": -1}],
+    )
     lines = uplink.cluster(data)
     assert ("  BRICK666   MAINT 2H", uplink.OK) in lines
     assert ("  BRICK1982  MAINT NO END", uplink.OK) in lines
@@ -604,3 +571,59 @@ def test_card_remounts_after_an_io_error_not_twice_in_a_row(monkeypatch):
     assert not card.failed(OSError(5))  # too soon
     clock[0] += 2
     assert card.failed(OSError(5)) and card.remounts == 2
+
+
+# --- hue -----------------------------------------------------------------
+LAMP_ON = {
+    "state": "on",
+    "attributes": {
+        "friendly_name": "Lamp",
+        "brightness": 128,
+        "color_mode": "color_temp",
+        "color_temp_kelvin": 2700,
+        "rgb_color": [255, 167, 87],
+    },
+}
+
+
+def test_hue_parses_on_off_and_unavailable():
+    on = hue.parse_state("light.lamp", LAMP_ON)
+    assert on["name"] == "Lamp" and on["on"] and abs(on["bri"] - 128 / 255) < 1e-9
+    assert on["rgb"] == (255, 167, 87) and on["kelvin"] == 2700
+    off = hue.parse_state("light.lamp", {"state": "off", "attributes": {"friendly_name": "Lamp", "brightness": None}})
+    assert not off["on"] and off["bri"] == 0.0 and off["rgb"] is None
+    assert hue.parse_state("light.lamp", {"state": "unavailable", "attributes": {}}) is None
+    assert hue.parse_state("light.lamp", None) is None
+
+
+def test_hue_leds_stay_bright_even_for_the_night_light():
+    on = hue.parse_state("light.lamp", LAMP_ON)
+    r, g, b = hue.led_colour(on)
+    assert max(r, g, b) >= 0.6 * 255 and r > g > b  # the lamp's warm hue, pushed bright
+    night = dict(on, bri=0.05)
+    assert max(hue.led_colour(night)) >= int(0.6 * 255)
+    full = dict(on, bri=1.0, rgb=(0, 255, 65))
+    assert hue.led_colour(full) == (0, 255, 65)
+    assert hue.led_colour(dict(on, on=False)) == (0, 0, 0) and hue.led_colour(None) == (0, 0, 0)
+    assert hue.led_colour(dict(on, rgb=None)) != (0, 0, 0)  # on without a colour: warm white
+
+
+def test_hue_bar_hexline_and_url():
+    assert hue.bar(0.5, 10) == "[#####.....]" and hue.bar(2, 4) == "[####]" and hue.bar(-1, 3) == "[...]"
+    assert hue.hexline(b'{"entity_id"', 4) == "7B 22 65 6E"
+    assert hue.parse_url("http://brick2000:8123") == ("brick2000", 8123)
+    assert hue.parse_url("http://ha/") == ("ha", 80)
+
+
+def test_hue_scenes_are_turn_on_data():
+    names = [n for n, _ in hue.SCENES]
+    assert names == ["BRT", "RLX", "HAX", "NITE"]
+    for _, data in hue.SCENES:
+        assert 1 <= data["brightness_pct"] <= 100
+        assert ("color_temp_kelvin" in data) != ("rgb_color" in data)
+
+
+def test_hue_without_a_token_or_lights_is_off():
+    assert not hue.Hue("http://brick2000:8123", "", ["light.lamp"]).configured
+    assert not hue.Hue("http://brick2000:8123", "t", [""]).configured
+    assert hue.Hue("http://brick2000:8123", "t", ["light.lamp"]).configured
