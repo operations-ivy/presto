@@ -1,5 +1,6 @@
 import calendar
 import datetime as dt
+import errno
 import types
 
 import pytest
@@ -692,14 +693,130 @@ def test_hue_bar_hexline_and_url():
 
 
 def test_hue_scenes_are_turn_on_data():
-    names = [n for n, _ in hue.SCENES]
+    names = [n for n, _, _ in hue.SCENES]
     assert names == ["BRT", "RLX", "HAX", "NITE"]
-    for _, data in hue.SCENES:
+    for _, data, rgb in hue.SCENES:
         assert 1 <= data["brightness_pct"] <= 100
         assert ("color_temp_kelvin" in data) != ("rgb_color" in data)
+        assert len(rgb) == 3 and max(rgb) == 255  # the key's colour, bright
+
+
+def lamp_state(on=True, brightness=255, **attrs):
+    return hue.parse_state(
+        "light.lamp", {"state": "on" if on else "off", "attributes": {"brightness": brightness, **attrs}}
+    )
+
+
+def test_scene_on_follows_the_lamps_state():
+    scenes = {n: data for n, data, _ in hue.SCENES}
+    nite = lamp_state(brightness=13, color_temp_kelvin=2000, color_mode="color_temp")  # 13/255 = 5 %
+    assert hue.scene_on(nite, scenes["NITE"])
+    assert not hue.scene_on(nite, scenes["BRT"]) and not hue.scene_on(nite, scenes["RLX"])
+    hax = lamp_state(brightness=179, rgb_color=[10, 255, 80], color_mode="xy")  # 70 %, a nearby rgb
+    assert hue.scene_on(hax, scenes["HAX"]) and not hue.scene_on(hax, scenes["NITE"])
+    assert not hue.scene_on(lamp_state(on=False), scenes["BRT"])
+    assert not hue.scene_on(None, scenes["BRT"])
+    brt_dim = lamp_state(brightness=200, color_temp_kelvin=4000)  # 78 %: not BRT's 100
+    assert not hue.scene_on(brt_dim, scenes["BRT"])
 
 
 def test_hue_without_a_token_or_lights_is_off():
     assert not hue.Hue("http://brick2000:8123", "", ["light.lamp"]).configured
     assert not hue.Hue("http://brick2000:8123", "t", [""]).configured
     assert hue.Hue("http://brick2000:8123", "t", ["light.lamp"]).configured
+
+
+# --- hue: requests stepped between frames ------------------------------------
+
+
+class FakeSock:
+    """A non-blocking socket: connect is 'in progress', each recv hands out one chunk
+    (or 'not yet' first), and what was sent is kept."""
+
+    def __init__(self, reply, waits=1):
+        self.reply = [reply[i : i + 7] for i in range(0, len(reply), 7)]
+        self.waits = waits
+        self.sent = b""
+        self.closed = False
+
+    def setblocking(self, flag):
+        assert flag is False
+
+    def connect(self, addr):
+        raise OSError(errno.EINPROGRESS)
+
+    def send(self, data):
+        n = min(5, len(data))
+        self.sent += bytes(data[:n])
+        return n
+
+    def recv(self, n):
+        if self.waits:
+            self.waits -= 1
+            raise OSError(errno.EAGAIN)
+        return self.reply.pop(0) if self.reply else b""
+
+    def close(self):
+        self.closed = True
+
+
+class FakeSockets:
+    def __init__(self, *replies):
+        self.replies = list(replies)
+        self.made = []
+
+    def getaddrinfo(self, host, port):
+        return [(2, 1, 0, "", (host, port))]
+
+    def socket(self):
+        self.made.append(FakeSock(self.replies.pop(0)))
+        return self.made[-1]
+
+
+NET_UP = types.SimpleNamespace(up=True)
+
+
+def run_hue(h, passes=200):
+    for t in range(passes):
+        h.step(NET_UP, t)
+
+
+def test_exchange_steps_through_connect_send_and_a_chunked_answer():
+    sock = FakeSock(b"HTTP/1.0 200 OK\r\nX: y\r\n\r\n{}", waits=2)
+    ex = hue.Exchange(sock, ("h", 1), b"GET / HTTP/1.0\r\n\r\n", 0, 1000)
+    results = [ex.step(t) for t in range(40)]
+    done = [r for r in results if r is not None]
+    assert done[0] == (True, "200 OK", b"{}")
+    assert sock.sent == b"GET / HTTP/1.0\r\n\r\n"
+    assert results.index(done[0]) > 5  # it took many small steps, none of them blocking
+
+
+def test_exchange_times_out_and_refuses_quietly():
+    ex = hue.Exchange(FakeSock(b"", waits=10**6), ("h", 1), b"", 0, 100)
+    assert ex.step(50) is None and ex.step(101) == (False, "TIMEOUT", b"")
+
+
+def test_hue_polls_then_sends_a_call_and_reports_it():
+    state = b'HTTP/1.0 200 OK\r\n\r\n{"state": "on", "attributes": {"brightness": 255, "friendly_name": "Lamp"}}'
+    socks = FakeSockets(state, b"HTTP/1.0 200 OK\r\n\r\n[]", state)
+    h = hue.Hue("http://brick2000:8123", "tok", ["light.lamp"], sockets=socks)
+    run_hue(h)
+    assert h.lights["light.lamp"]["on"] and h.lights["light.lamp"]["name"] == "Lamp"
+    h.send("turn_on", "light.lamp", {"brightness_pct": 40}, "scene.rlx")
+    assert h.busy
+    run_hue(h)
+    assert not h.busy and h.seq == 1
+    ok, status, _, body, label = h.last
+    assert ok and status == "200 OK" and label == "scene.rlx"
+    assert b'"brightness_pct": 40' in body
+    call = socks.made[1].sent
+    assert call.startswith(b"POST /api/services/light/turn_on HTTP/1.0\r\n") and b"Bearer tok" in call
+    assert all(s.closed for s in socks.made)
+
+
+def test_hue_marks_a_light_unavailable_when_home_assistant_refuses():
+    h = hue.Hue(
+        "http://brick2000:8123", "bad", ["light.lamp"], sockets=FakeSockets(b"HTTP/1.0 401 Unauthorized\r\n\r\n")
+    )
+    run_hue(h, 60)
+    assert "light.lamp" in h.lights and h.lights["light.lamp"] is None
