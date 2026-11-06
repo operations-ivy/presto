@@ -9,6 +9,7 @@ from neon import fx, nav, sightings, sprites, theme, tz, wx
 W = H = 240  # the Presto at its native speed: 240x240, doubled to the 480 panel
 SKY_BOTTOM = 165
 GROUND = 226
+SMALL_PX = 10  # left-aligned Home's date and forecast: capitals 10 px, 1.25x the pixel font's 8
 LEFT = 14  # home_align: left: the text's margin, clear of the left arrow (y 137+)
 SUMMON_X, SUMMON_Y = 130, 150  # left layout: a tap right of this and above that summons a sighting
 ARROW_SCALE = 1
@@ -299,9 +300,9 @@ class Home:
         else:
             s, date = "--:--", "SYNCING TIME" if ctx.net.up else "NO SIGNAL"
         left = self.left
-        # centered: 48 px tall, clear of the top arrow and the forecast; left: 32 px, leaving
-        # the right half of the sky to the sightings
-        scale = 4 if left else 6
+        # centered: 48 px tall, clear of the top arrow and the forecast; left: 40 px (it was
+        # 32: the user, 2026-11-06), leaving the right half of the sky to the sightings
+        scale = 5 if left else 6
         x = LEFT if left else (W - d.measure_text(s, scale) - (26 if ampm else 0)) // 2
         y = 26
         if ampm:
@@ -321,7 +322,7 @@ class Home:
             fx.neon_text(d, p, s, x, y, scale, p.cyan, p.cyan_glow, flicker)
         if left:
             d.set_pen(p.amber)
-            d.text(date, LEFT, y + 8 * scale + 5, W, 1)  # 63..71
+            fx.vector_text(d, date, LEFT, y + 8 * scale + 5, SMALL_PX)  # 71..81
         else:
             fx.centered(d, date, y + 8 * scale + 6, 2, p.amber)  # 80..96, above the forecast at 102
 
@@ -330,7 +331,7 @@ class Home:
         s = ctx.weather.summary
         kind = ctx.weather.kind
         left = self.left
-        y = 78 if left else 102
+        y = 88 if left else 102
         # the icon: animated, two frames
         alt = (self.frame // 5) % 2
         ix = LEFT if left else 44
@@ -347,20 +348,28 @@ class Home:
             if kind == "fog":
                 self.icons["fog"].draw(d, p.letters, ix, y + 13, 2)
         tx = ix + 34 if left else ix + 38
-        # the forecast's scale, then each line's y; left: the small font, in ~100 px
-        scale, label_y, room_y, wrap = (1, 11, 21, 100) if left else (2, 19, 30, 158)
+        # each line's y and the wrap; left: SMALL_PX vector text in ~125 px; centered: the
+        # pixel font, the forecast at 2x
+        label_y, room_y, wrap = (14, 27, 125) if left else (19, 30, 158)
+
+        def line(text, dy, scale=1):
+            if left:
+                fx.vector_text(d, text, tx, y + dy, SMALL_PX, wrap)
+            else:
+                d.text(text, tx, y + dy, wrap, scale)
+
         d.set_pen(p.text)
         if not ctx.weather.configured:
-            d.text("SET LATITUDE/", tx, y + 1, wrap, 1)
-            d.text("LONGITUDE", tx, y + 10, wrap, 1)
+            line("SET LATITUDE/", 1)
+            line("LONGITUDE", label_y)
         else:
-            d.text(wx.line(s, ""), tx, y + 1, wrap, scale)
+            line(wx.line(s, ""), 1, 2)
             d.set_pen(p.dim)
-            d.text(wx.LABELS.get(kind, "NO DATA"), tx, y + label_y, wrap, 1)
+            line(wx.LABELS.get(kind, "NO DATA"), label_y)
         room = ctx.room
         if room.temp is not None:
             d.set_pen(p.sodium)
-            d.text("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), tx, y + room_y, wrap, 1)
+            line("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), room_y)
 
     def _arms(self, d, p, now_ms):
         # no app names (presto#11): just the four chevrons, pulsing green <-> black

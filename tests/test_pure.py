@@ -206,6 +206,25 @@ def test_the_blink_is_twice_then_rest(t, lit):
     assert (nav.arrow_level("blink", t, 0) == 1.0) == lit
 
 
+def test_vector_text_sizes_its_capitals_and_restores_the_pixel_font():
+    from neon import fx
+
+    calls = []
+
+    class Display:
+        def set_font(self, name):
+            calls.append(("font", name))
+
+        def text(self, s, x, y, wrap, scale):
+            calls.append(("text", s, x, y, wrap, scale))
+
+    fx.vector_text(Display(), "THU NOV 6", 14, 71, 10)
+    font, (_, s, x, y, wrap, k), restore = calls
+    assert font == ("font", "sans") and restore == ("font", "bitmap8")
+    assert abs(k * fx.VECTOR_CAP - 10) < 1e-9  # capitals 10 px: 1.25x the pixel font's 8
+    assert y == 71 + round(fx.VECTOR_TOP * k)  # the origin sits below the capitals' top
+
+
 def test_arrow_pulse_setting():
     assert conf.load("device/settings.yaml", {})["arrow_pulse"] == "faint"
 

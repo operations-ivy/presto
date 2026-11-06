@@ -21,6 +21,21 @@ def centered(display, s, y, scale, pen, W=W):
     display.text(s, (W - text_w(display, s, scale)) // 2, y, W, scale)
 
 
+# The vector (Hershey) font, for text between the pixel font's whole steps (8, 16 px).
+# Its capitals run from VECTOR_TOP units above the glyph's origin down to the baseline,
+# VECTOR_CAP units in all (classic Hershey metrics; tune here if the device disagrees).
+VECTOR_CAP, VECTOR_TOP = 21, 12
+
+
+def vector_text(display, s, x, y, px, wrap=W):
+    """s with capitals px tall, their top at y, in the vector font; the pixel font
+    (bitmap8) is set again after."""
+    k = px / VECTOR_CAP
+    display.set_font("sans")
+    display.text(s, x, y + int(VECTOR_TOP * k + 0.5), wrap, k)
+    display.set_font("bitmap8")
+
+
 def neon_text(display, pens, s, x, y, scale, core, glow, flicker=1.0):
     """A neon tube: a halo offset around the core. flicker < 1 dims the halo (a stutter)."""
     if flicker > 0.3:
@@ -52,8 +67,16 @@ class GlyphDrops:
         self.top, self.bottom = top, bottom
         g = len(GLYPHS)
         # [x, y, speed, glyph, the glyph before it (the trail's)]
-        self.drops = [[random.randint(0, self.MAX_X), random.randint(top, bottom), random.randint(3, 7),
-                       random.randrange(g), random.randrange(g)] for _ in range(200)]
+        self.drops = [
+            [
+                random.randint(0, self.MAX_X),
+                random.randint(top, bottom),
+                random.randint(3, 7),
+                random.randrange(g),
+                random.randrange(g),
+            ]
+            for _ in range(200)
+        ]
         self.n = n
 
     def step_draw(self, display, pens):
@@ -81,7 +104,8 @@ class GlyphRain:
         self.top, self.bottom = top, bottom
         self.cw = W // cols
         self.cols = [
-            [random.randint(top - 200, bottom), random.randint(*speed), random.randint(*length), True] for _ in range(cols)
+            [random.randint(top - 200, bottom), random.randint(*speed), random.randint(*length), True]
+            for _ in range(cols)
         ]
 
     def set_health(self, i, ok):
@@ -105,8 +129,9 @@ class GlyphRain:
                     display.set_pen(pens.phosphor if k < 4 else pens.phosphor_dim)
                 else:
                     display.set_pen(pens.red if k < 3 else pens.line)
-                display.character(ord(random.choice(GLYPHS)) if k < 2 else ord(GLYPHS[(i * 7 + k) % len(GLYPHS)]),
-                                  x, y, self.scale)
+                display.character(
+                    ord(random.choice(GLYPHS)) if k < 2 else ord(GLYPHS[(i * 7 + k) % len(GLYPHS)]), x, y, self.scale
+                )
 
 
 def scanlines(display, pen, top=0, bottom=W, every=2):
