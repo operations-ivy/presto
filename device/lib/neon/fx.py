@@ -168,38 +168,3 @@ def draw_static(display, pens, cover):
     for _ in range(random.randint(0, 2)):  # a tear: the picture losing its hold
         display.set_pen(pens.text if random.random() < 0.5 else pens.dim)
         display.rectangle(0, random.randint(0, W - 1), W, 1)
-
-
-def home_tab(display, pens, edge, now_ms, rise=1.0):
-    """The HOME button, raised by a tap on the edge facing Home (tap again to go
-    back). It sits in that edge's tap band (nav.EDGE), rising out of the edge
-    (rise 0 -> 1, eased) and pulsing gently once up."""
-    pulse = (now_ms // 600) % 2
-    ring = pens.cyan if pulse else pens.cyan_glow
-    e = 1 - (1 - rise) * (1 - rise)  # ease out
-    if edge in ("up", "down"):
-        w, h = 80, 20
-        x = (W - w) // 2
-        hidden = int((h + 4) * (1 - e))
-        y = 4 - hidden if edge == "up" else W - 4 - h + hidden
-        label = "^ HOME" if edge == "up" else "v HOME"
-    else:
-        w, h = 22, 90
-        hidden = int((w + 3) * (1 - e))
-        x = 3 - hidden if edge == "left" else W - 3 - w + hidden
-        y = (W - h) // 2
-        label = None
-    display.set_pen(pens.night)
-    display.rectangle(x, y, w, h)
-    display.set_pen(ring)
-    display.rectangle(x, y, w, 1)
-    display.rectangle(x, y + h - 1, w, 1)
-    display.rectangle(x, y, 1, h)
-    display.rectangle(x + w - 1, y, 1, h)
-    display.set_pen(pens.text)
-    if label:
-        display.text(label, x + (w - display.measure_text(label, 2)) // 2, y + 3, W, 2)
-    else:  # vertical: an arrow, then H O M E down the tab
-        display.text("<" if edge == "left" else ">", x + 5, y + 4, W, 2)
-        for i, ch in enumerate("HOME"):
-            display.character(ord(ch), x + 5, y + 22 + i * 16, 2)

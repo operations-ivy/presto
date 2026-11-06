@@ -1,9 +1,10 @@
 """The plus: Home in the middle, one app on each arm. Pure logic, tested on CPython.
 
 Navigation is by taps (the user, 2026-11-03): on Home, the band along an edge
-opens that arm's app; in an app, the HOME button is hidden on the edge facing
-Home: a tap there raises it, a second tap goes Home. A two-finger tap goes Home
-from anywhere. `swipe()` is kept for gestures later.
+opens that arm's app; in an app, a small arrow on the edge facing Home points
+back to it, and one tap on that edge goes Home (the user, 2026-11-06; it was a
+hidden button raised by a first tap). A two-finger tap goes Home from anywhere.
+`swipe()` is kept for gestures later.
 """
 
 import math
@@ -31,9 +32,7 @@ def classify(dx, dy, ms, two_fingers=False):
     return "down" if dy > 0 else "up"
 
 
-EDGE = 32  # px (of 240): the tap band along each edge (Home's arm buttons, an app's HOME tab)
-REVEAL = "reveal"  # tap() result: the hidden HOME button was raised
-REVEAL_MS = 4000  # how long a raised HOME button stays up
+EDGE = 32  # px (of 240): the tap band along each edge (Home's arm buttons, an app's way Home)
 _TICKS_PERIOD = 1 << 30  # MicroPython's ticks_ms wraps here
 
 
@@ -62,7 +61,6 @@ class Plus:
         self.arms = dict(arms)
         self.where = {v: k for k, v in self.arms.items()}  # app name -> arm
         self.current = HOME
-        self.revealed_at = None  # when the hidden HOME button was raised (ticks_ms)
 
     def swipe(self, direction):
         """Apply a swipe; returns the new screen name, or None for a bump."""
@@ -77,12 +75,11 @@ class Plus:
         return target
 
     def tap(self, x, y, now_ms=0):
-        """Taps navigate. On Home, an edge band opens that arm's app. In an app the
-        HOME button is hidden: a tap on its band (the edge facing Home) raises it
-        for REVEAL_MS, and a second tap there while it's up goes Home.
+        """Taps navigate. On Home, an edge band opens that arm's app; in an app, a tap
+        on the band facing Home (its arrow's edge) goes Home.
 
-        Returns the new screen name, REVEAL when the button was just raised, or
-        None when the tap belongs to the current screen."""
+        Returns the new screen name, or None when the tap belongs to the current
+        screen. (now_ms is kept for callers; one tap needs no timing.)"""
         z = zone(x, y)
         if z is None:
             return None
@@ -91,26 +88,14 @@ class Plus:
             if target is None:
                 return None
         elif z == self.home_tab():
-            if not self.revealed(now_ms):
-                self.revealed_at = now_ms
-                return REVEAL
             target = HOME
         else:
             return None
         self.current = target
-        self.revealed_at = None
         return target
 
-    def revealed(self, now_ms):
-        """Whether the HOME button is up (raised less than REVEAL_MS ago)."""
-        return self.revealed_at is not None and 0 <= ticks_diff(now_ms, self.revealed_at) < REVEAL_MS
-
-    def reveal_age(self, now_ms):
-        """ms since the HOME button was raised (for its rise animation), or None."""
-        return ticks_diff(now_ms, self.revealed_at) if self.revealed(now_ms) else None
-
     def home_tab(self, name=None):
-        """The edge an app's HOME tab sits on: the one facing back toward Home."""
+        """The edge an app's way Home sits on: the one facing back toward Home."""
         name = name or self.current
         return None if name == HOME else OPPOSITE[self.where[name]]
 
@@ -119,7 +104,6 @@ class Plus:
         if name != HOME and name not in self.where:
             raise ValueError(name)
         self.current = name
-        self.revealed_at = None
         return name
 
     def entry_direction(self, name):

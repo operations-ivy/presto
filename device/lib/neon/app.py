@@ -36,9 +36,6 @@ DEFAULTS = {
 }
 
 
-RISE_MS = 300  # the HOME button's rise
-
-
 class Ctx:
     pass
 
@@ -99,7 +96,6 @@ def run(presto, secrets):
     last_frame = time.ticks_ms()  # the first frame is drawn anyway: cur starts dirty
     last_light = 0
     frames, fps_at = 0, time.ticks_ms()
-    tab_up = False  # the hidden HOME button is showing
 
     def switch(name):
         nonlocal cur
@@ -122,11 +118,9 @@ def run(presto, secrets):
 
     def draw(now_ms):
         cur.draw(d, now_ms)
-        tab, age = plus.home_tab(), plus.reveal_age(now_ms)
-        if tab is not None and age is not None:  # the hidden HOME button, raised by a tap
-            # it rises out of its edge; a screen that only redraws on change shows it up at once
-            rise = 1.0 if cur.frame_ms is None else min(1.0, age / RISE_MS)
-            fx.home_tab(d, ctx.pens, tab, now_ms, rise)
+        tab = plus.home_tab()
+        if tab is not None:  # in an app: Home's arrow on the edge facing Home, one tap back
+            screens_by_name[nav.HOME].edge_arrow(d, tab, now_ms)
 
     from neon import watchdog
 
@@ -161,9 +155,6 @@ def run(presto, secrets):
                     target = plus.tap(x0, y0, now)
                     if target is None:
                         cur.tap(x0, y0)  # not a navigation band: the app's own tap
-                    elif target == nav.REVEAL:
-                        tab_up = True  # the HOME button rises; a second tap there goes Home
-                        cur.dirty = True
                     else:
                         plus.current = before  # switch() moves it
                         chirp.go_home() if target == nav.HOME else chirp.enter_app()
@@ -200,9 +191,6 @@ def run(presto, secrets):
                 _follow_lamp(ctx, presto, cur, now, leds_light, leds_floor)
 
             # --- frame ---
-            if tab_up and not plus.revealed(now):  # the HOME button has hidden again
-                tab_up = False
-                cur.dirty = True
             if hasattr(cur, "tick"):
                 cur.tick(now)
             due = cur.frame_ms is not None and time.ticks_diff(now, last_frame) >= cur.frame_ms

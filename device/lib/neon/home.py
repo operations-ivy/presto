@@ -375,6 +375,12 @@ class Home:
                 self.box_w += 4 + d.measure_text("PM", 2)
         return self.box_w
 
+    def edge_arrow(self, d, way, now_ms):
+        """One of Home's arrows, for an app: on the edge facing Home, pointing to it."""
+        x, y = ARROW_AT[way]
+        level = nav.arrow_level(self.pulse, now_ms, nav.ARROW_WAYS.index(way))
+        self.arrows[way].draw(d, self.arrow_pens[int(level * 15)], x, y, ARROW_SCALE)
+
     def _weather_icon(self, d, p, kind, ix, y):
         alt = (self.frame // 5) % 2  # animated, two frames
         if kind in ("clear", "partly"):

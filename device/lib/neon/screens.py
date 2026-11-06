@@ -382,7 +382,7 @@ class Lights(Screen):
     terminal. Tap the big power key to toggle, the bar to set the level, a scene key
     to load one (HAX: access granted). Every command shows what went over the wire.
     Several lights (settings: lights): tap the readout to cycle them. (Taps on the top
-    band never get here: it's the hidden HOME button's.)"""
+    band never get here: it's the way Home.)"""
 
     name = "lights"
     frame_ms = 90

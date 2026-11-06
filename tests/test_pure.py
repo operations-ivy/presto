@@ -254,37 +254,23 @@ def test_taps_open_apps_and_come_home():
     assert p.tap(5, 120, 0) == "photos"
     assert p.home_tab() == "right"
     assert p.tap(50, 120, 100) is None and p.current == "photos"  # a photo tap, not navigation
-    assert p.tap(5, 120, 200) is None  # the far edge is not the HOME button's
-    assert not p.revealed(300)
+    assert p.tap(5, 120, 200) is None  # the far edge is not the way Home
 
 
-def test_hidden_home_button():
+def test_one_tap_on_the_edge_facing_home_goes_home():
     p = nav.Plus(ARMS)
-    p.tap(120, 5, 0)  # Weather; its HOME button hides on the bottom edge
+    p.tap(120, 5, 0)  # Weather; its arrow is on the bottom edge
     assert p.current == "weather" and p.home_tab() == "down"
-    assert p.tap(120, 235, 1000) == nav.REVEAL and p.current == "weather"  # first tap raises it
-    assert p.revealed(1500) and p.reveal_age(1500) == 500
-    assert p.tap(120, 235, 2000) == nav.HOME  # second tap, while it's up: Home
-    assert not p.revealed(2001)
-
-
-def test_home_button_hides_again():
-    p = nav.Plus(ARMS)
-    p.tap(235, 120, 0)  # Brick
-    assert p.tap(5, 120, 1000) == nav.REVEAL
-    later = 1000 + nav.REVEAL_MS
-    assert not p.revealed(later)
-    assert p.tap(5, 120, later) == nav.REVEAL and p.current == "brick"  # raised again, not Home
+    assert p.tap(120, 235, 1000) == nav.HOME and p.current == nav.HOME  # one tap
+    p.tap(235, 120, 0)  # Brick: the arrow on the left
+    assert p.tap(120, 235, 10) is None and p.current == "brick"  # the other edges are Brick's
+    assert p.tap(5, 120, 20) == nav.HOME
 
 
 def test_ticks_diff_wraps():
     top = (1 << 30) - 100
     assert nav.ticks_diff(50, top) == 150
     assert nav.ticks_diff(top, 50) == -150
-    p = nav.Plus(ARMS)
-    p.tap(235, 120, 0)
-    assert p.tap(5, 120, top) == nav.REVEAL
-    assert p.revealed(50)  # 150 ms later, across the wrap
 
 
 # --- photosync -----------------------------------------------------------
