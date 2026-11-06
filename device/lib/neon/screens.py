@@ -403,10 +403,9 @@ class Lights(Screen):
         self.target = 0
         self.typed = 0
         self.prompt = 0  # characters of the prompt typed so far
-        self.pending = None  # (service, data, label) waiting for the next pass
-        self.sending = False
         self.pressed, self.pressed_at = None, 0  # the tapped key: "PWR", a scene name, or None
-        self.scene = None  # the scene last loaded here: lit at any level while its colour holds
+        self.scene = None  # the scene last loaded here: lit, at any level, until the lamp's off
+        self.seq = 0  # the Hue call results already shown
         self.status = None  # (text, ok) of the last command, for the readout
         self.banner, self.banner_at = None, 0  # ("ACCESS GRANTED", ok)
         self.seen = None  # the light as last drawn, to re-decrypt on a change
@@ -421,14 +420,16 @@ class Lights(Screen):
         return self.ctx.hue.lights.get(e) if e else None
 
     def _queue(self, service, data, label, key, now_ms):
-        if self.pending is None and not self.sending and self._entity():
-            self.pending = (service, data, label)
+        if self._entity():
+            self.ctx.hue.send(service, self._entity(), data, label)
             self.pressed, self.pressed_at = key, now_ms
+            if label.startswith("scene."):
+                self.scene = label[6:].upper()  # lit at once, not after the next poll
 
     def _lit(self, name, data, light):
-        """A scene key is lit while the lamp is in its scene, or, for the scene last
-        loaded here, in its colour at any level (its sides have stepped it)."""
-        return hue.scene_on(light, data) or (name == self.scene and hue.scene_on(light, data, level=False))
+        """A scene key is lit while the lamp is in its scene, and the scene last loaded
+        here from its tap until the lamp goes off (at any level: its sides step it)."""
+        return name == self.scene or hue.scene_on(light, data)
 
     def _side(self, x, i):
         """-1, 0 or 1: the left third, the middle or the right third of scene key i."""
@@ -475,34 +476,27 @@ class Lights(Screen):
             self.ctx.hue.next_at = None  # tap anywhere: retry now
 
     def tick(self, now_ms):
-        """The call runs here, between frames: the pressed key shows for a frame first."""
+        """Home Assistant's answers, stepped between frames (hue.Exchange)."""
         lights = self.ctx.hue
-        if self.pending is not None:
-            if not self.sending:
-                self.sending = True
-                return
-            service, data, label = self.pending
-            self.pending = None
-            try:
-                ok = lights.call(service, self._entity(), data)
-            finally:
-                self.sending = False
-            _, status, ms, _ = lights.last
+        lights.step(self.ctx.net, now_ms)
+        if lights.seq != self.seq:
+            self.seq = lights.seq
+            ok, status, ms, _, label = lights.last
             self.status = ("%s %dMS" % (status, ms), ok)
-            if ok and label.startswith("scene."):
-                self.scene = label[6:].upper()
             if not ok:
                 self.banner = ("ACCESS DENIED", False)
+                if label.startswith("scene."):
+                    self.scene = None
             elif label == "scene.hax":
                 self.banner = ("ACCESS GRANTED", True)
             else:
                 self.banner = None
             self.banner_at = now_ms
-        if self.pressed is not None and time.ticks_diff(now_ms, self.pressed_at) > self.PRESS_MS:
-            if self.pending is None and not self.sending:
-                self.pressed = None
-        lights.step(self.ctx.net, now_ms)
+        if self.pressed is not None and time.ticks_diff(now_ms, self.pressed_at) > self.PRESS_MS and not lights.busy:
+            self.pressed = None
         light = self._light()
+        if self.scene is not None and light is not None and not light["on"] and not lights.busy:
+            self.scene = None  # the lamp went off: no scene is lit
         key = None if light is None else (light["on"], round(light["bri"], 2), light["rgb"])
         if key != self.seen:
             self.seen, self.typed = key, 0  # the readout decrypts again
@@ -558,7 +552,7 @@ class Lights(Screen):
         self.prompt = min(len(self.PROMPT), self.prompt + 2)
         d.set_pen(p.phosphor)
         d.text(self.PROMPT[: self.prompt], 6, 12, W, 1)
-        if self.sending or self.pending:
+        if self.ctx.hue.busy:
             d.set_pen(p.amber)
             d.text("TX..", W - 30, 12, W, 1)
         if not self.ctx.hue.configured:
@@ -569,7 +563,7 @@ class Lights(Screen):
         light = self._light()
         lamp = self._lamp_pen(light)
         on = bool(light and light["on"])
-        busy = self.pending is not None or self.sending
+        busy = self.ctx.hue.busy
         # the power key: the lamp's own colour, breathing while on; lit while pressed
         px, py, pw, ph = self.POWER
         pressed = self.pressed == "PWR"
