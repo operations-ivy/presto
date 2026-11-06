@@ -415,8 +415,8 @@ def test_led_rgb_is_none_until_the_light_is_known():
     h.lights["light.lamp"] = hue.parse_state(
         "light.lamp", {"state": "on", "attributes": {"brightness": 13, "rgb_color": [255, 137, 14]}}
     )
-    r, g, b = h.led_rgb("light.lamp")
-    assert r >= 0.6 * 255 - 1 and r > g > b  # a 5 % night light still shows, warm
+    r, g, b = h.led_rgb("light.lamp", floor=0.6)
+    assert r >= int(0.6 * 255) and r > g > b  # a 5 % night light still shows, warm
     h.lights["light.lamp"] = None  # unavailable
     assert h.led_rgb("light.lamp") is None
 

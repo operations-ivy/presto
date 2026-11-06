@@ -132,7 +132,7 @@ class Hue:
         return ok
 
     def _request(self, method, path, body=b"", timeout=TIMEOUT_S):
-        """(ok, status line, body). Never raises."""
+        """(ok, status: "200 OK", "401 Unauthorized", "NO ROUTE"..., body). Never raises."""
         import socket
 
         s = None
@@ -147,18 +147,18 @@ class Hue:
             if body:
                 head += "Content-Type: application/json\r\nContent-Length: %d\r\n" % len(body)
             s.send(head.encode() + b"\r\n" + body)
-            buf = b""
+            buf = bytearray()  # grown in place: no new bytes per chunk on the device's heap
             while len(buf) < 16384:
                 chunk = s.recv(1024)
                 if not chunk:
                     break
-                buf += chunk
-            top, _, rest = buf.partition(b"\r\n\r\n")
-            status = top.split(b"\r\n", 1)[0].decode()
-            ok = " 200" in status
+                buf.extend(chunk)
+            top, _, rest = bytes(buf).partition(b"\r\n\r\n")
+            status = top.split(b"\r\n", 1)[0].decode().split(" ", 1)[-1]  # without HTTP/1.x
+            ok = status.split(" ", 1)[0] == "200"
             self.fails = 0 if ok else self.fails + 1
             return ok, status, rest
-        except Exception as e:
+        except Exception as e:  # deliberately wide: OSError, gaierror, a bad port's ValueError...
             self.fails += 1
             if self.fails >= 3:
                 self.addr = None  # it may have moved

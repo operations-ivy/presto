@@ -5,7 +5,7 @@ import os
 import random
 import time
 
-from neon import card, fx, theme, uplink, wx
+from neon import card, fx, hue, theme, uplink, wx
 
 W = H = 240
 
@@ -78,7 +78,7 @@ class Weather(Screen):
         d.set_pen(p.rgb(8, 14, 30))
         d.rectangle(x0, y0, w, h)
         d.set_pen(edge)
-        for (a, b, c, e) in ((x0, y0, w, 1), (x0, y0 + h - 1, w, 1), (x0, y0, 1, h), (x0 + w - 1, y0, 1, h)):
+        for a, b, c, e in ((x0, y0, w, 1), (x0, y0 + h - 1, w, 1), (x0, y0, 1, h), (x0 + w - 1, y0, 1, h)):
             d.rectangle(a, b, c, e)
         d.set_pen(p.rgb(20, 40, 70))
         off = (now_ms // 60) % 3
@@ -306,7 +306,7 @@ class Brick(Screen):
             ("  RSSI  %s" % ("%d dBm" % net["rssi"] if net["rssi"] is not None else "--"), uplink.OK),
             ("  RAM   %d KB FREE   SD %s" % (ram, sd), uplink.OK),
             ("  UP    %d MIN" % (time.ticks_ms() // 60000), uplink.OK),
-            ("  CODE  %s %s" % (self.ctx.ota.version or "--", self.ctx.ota.state.get("status", "")), uplink.OK),
+            ("  CODE  {} {}".format(self.ctx.ota.version or "--", self.ctx.ota.state.get("status", "")), uplink.OK),
         ]
 
     def draw(self, d, now_ms):
@@ -431,16 +431,14 @@ class Lights(Screen):
         self.ctx.hue.next_at = None  # fresh state on the way in
 
     def tap(self, x, y):
-        from neon import hue
-
-        light = self._light()
         px, py, pw, ph = self.POWER
         bx, by, bw, bh = self.BAR
         if px <= x < px + pw and py <= y < py + ph:
             self._queue("toggle", None, "light.toggle")
         elif by - 4 <= y < by + bh + 4:
             cell = max(1, min(self.CELLS, (x - bx) * self.CELLS // bw + 1))
-            self._queue("turn_on", {"brightness_pct": cell * 100 // self.CELLS}, "light.turn_on lvl=%d" % (cell * 5))
+            pct = cell * 100 // self.CELLS
+            self._queue("turn_on", {"brightness_pct": pct}, "light.turn_on lvl=%d" % pct)
         elif self.KEYS_Y <= y < self.KEYS_Y + self.KEY_H:
             i = max(0, min(len(hue.SCENES) - 1, (x - self.X0) // (self.KEY_W + 4)))
             name, data = hue.SCENES[i]
@@ -448,12 +446,12 @@ class Lights(Screen):
         elif x >= self.INFO_X and py <= y < py + ph and len(self.ctx.hue.entities) > 1:
             self.target += 1  # the readout: the next light
             self.typed = 0
-        elif light is None:
+        elif self._light() is None:
             self.ctx.hue.next_at = None  # tap anywhere: retry now
 
     def tick(self, now_ms):
         """The call runs here, between frames: TX shows for a frame first."""
-        hue_ = self.ctx.hue
+        lights = self.ctx.hue
         if self.pending is not None:
             if not self.sending:
                 self.sending = True
@@ -461,16 +459,12 @@ class Lights(Screen):
             service, data, label = self.pending
             self.pending = None
             try:
-                ok = hue_.call(service, self._entity(), data)
+                ok = lights.call(service, self._entity(), data)
             finally:
                 self.sending = False
-            _, status, ms, body = hue_.last
-            from neon import hue
-
+            _, status, ms, body = lights.last
             self._say("  " + hue.hexline(body), "dim")
-            self._say(
-                "< %s %dms" % (status.replace("HTTP/1.0 ", "").replace("HTTP/1.1 ", ""), ms), "ok" if ok else "bad"
-            )
+            self._say("< %s %dms" % (status, ms), "ok" if ok else "bad")
             if not ok:
                 self.banner = ("ACCESS DENIED", False)
             elif label == "scene.hax":
@@ -478,7 +472,7 @@ class Lights(Screen):
             else:
                 self.banner = None
             self.banner_at = now_ms
-        hue_.step(self.ctx.net, now_ms)
+        lights.step(self.ctx.net, now_ms)
         light = self._light()
         key = None if light is None else (light["on"], round(light["bri"], 2), light["rgb"])
         if key != self.seen:
@@ -486,8 +480,6 @@ class Lights(Screen):
 
     # --- drawing ---
     def _lamp_pen(self, light):
-        from neon import hue
-
         r, g, b = hue.led_colour(light, 0.6)
         if (r, g, b) == (0, 0, 0):
             return self.ctx.pens.faint
@@ -514,8 +506,6 @@ class Lights(Screen):
         ]
 
     def draw(self, d, now_ms):
-        from neon import hue
-
         p = self.ctx.pens
         pens = {"h": p.phosphor, "ok": p.text, "dim": p.phosphor_dim, "bad": p.red, "text": p.phosphor}
         d.set_pen(p.night)

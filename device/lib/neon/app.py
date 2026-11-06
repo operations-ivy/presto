@@ -66,16 +66,15 @@ def run(presto, secrets):
     ctx.last_touch = time.ticks_ms()
     from neon import hue, ota
 
-    entities = [e.strip() for e in str(s["lights"] or "").split(",")]
+    entities = [e.strip() for e in str(s["lights"] or "").split(",") if e.strip()]
     leds_light = str(s["leds_light"] or "").strip()
-    ctx.hue = hue.Hue(
-        s["ha_url"],
-        getattr(secrets, "HA_TOKEN", ""),
-        entities + ([leds_light] if leds_light and leds_light not in entities else []),
-    )
+    if leds_light and leds_light not in entities:
+        entities.append(leds_light)
+    ctx.hue = hue.Hue(s["ha_url"], getattr(secrets, "HA_TOKEN", ""), entities)
     ctx.lamp_rgb = None  # the back LEDs' colour while they follow the light; None: the screen's own
+    leds_floor = s["leds_floor"]
     ctx.ota = ota.Updater(s["ota_url"], s["ota_minutes"] * 60)
-    services.log("running %s (%s)" % (ctx.ota.version or "unknown", ctx.ota.state.get("status", "no update yet")))
+    services.log("running {} ({})".format(ctx.ota.version or "unknown", ctx.ota.state.get("status", "no update yet")))
     ctx.dark = False
 
     apps = {c.name: c(ctx) for c in (screens.Weather, screens.Photos, screens.Brick, screens.Fun, screens.Lights)}
@@ -186,18 +185,8 @@ def run(presto, secrets):
             if time.ticks_diff(now, last_light) > 1000:
                 last_light = now
                 _light(ctx, presto, cur, now)
-            # the back LEDs: the lamp's colour (dark with it), whenever its state is known;
-            # not dimmed in a dark room: its night light would be one
             if leds_light:
-                ctx.hue.step(ctx.net, now)
-                rgb = ctx.hue.led_rgb(leds_light, s["leds_floor"])
-                if rgb != ctx.lamp_rgb:
-                    ctx.lamp_rgb = rgb
-                    if rgb is not None:
-                        for i in range(7):
-                            presto.set_led_rgb(i, *rgb)
-                    elif not ctx.dark:
-                        cur.leds(presto, now)  # unknown again: the screen's own
+                _follow_lamp(ctx, presto, cur, now, leds_light, leds_floor)
 
             # --- frame ---
             if tab_up and not plus.revealed(now):  # the HOME button has hidden again
@@ -215,7 +204,7 @@ def run(presto, secrets):
                 if cur.name == "home" and ctx.lamp_rgb is None and not ctx.dark:
                     cur.leds(presto, now)
             if time.ticks_diff(now, fps_at) > 10000:
-                print("[neon] %s %.1f fps" % (cur.name, frames * 1000 / time.ticks_diff(now, fps_at)))
+                print("[neon] {} {:.1f} fps".format(cur.name, frames * 1000 / time.ticks_diff(now, fps_at)))
                 frames, fps_at = 0, now
             time.sleep_ms(5)
     finally:
@@ -231,7 +220,25 @@ def _light(ctx, presto, cur, now):
     if ctx.lamp_rgb is not None:
         return  # the LEDs follow the lamp
     if dark:
-        for i in range(7):
-            presto.set_led_rgb(i, 0, 0, 0)
+        _fill(presto, (0, 0, 0))
     elif cur.name != "home":
         cur.leds(presto, now)
+
+
+def _follow_lamp(ctx, presto, cur, now, light, floor):
+    """The back LEDs: the lamp's colour (dark with it) whenever its state is known; not
+    dimmed in a dark room, which its night light would make one. Unknown: the screen's own."""
+    ctx.hue.step(ctx.net, now)
+    rgb = ctx.hue.led_rgb(light, floor)
+    if rgb == ctx.lamp_rgb:
+        return
+    ctx.lamp_rgb = rgb
+    if rgb is not None:
+        _fill(presto, rgb)
+    elif not ctx.dark:
+        cur.leds(presto, now)
+
+
+def _fill(presto, rgb):
+    for i in range(7):
+        presto.set_led_rgb(i, *rgb)
