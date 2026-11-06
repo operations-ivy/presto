@@ -9,6 +9,8 @@ from neon import fx, nav, sightings, sprites, theme, tz, wx
 W = H = 240  # the Presto at its native speed: 240x240, doubled to the 480 panel
 SKY_BOTTOM = 165
 GROUND = 226
+DATE_MAX_PX = 18  # the date grows to the clock's width, up to this
+ICON_W = 28  # the weather icons, 14 px at 2x
 SMALL_PX = 10  # left-aligned Home's date and forecast: capitals 10 px, 1.25x the pixel font's 8
 LEFT = 14  # home_align: left: the text's margin, clear of the left arrow (y 137+)
 SUMMON_X, SUMMON_Y = 130, 150  # left layout: a tap right of this and above that summons a sighting
@@ -85,6 +87,7 @@ class Home:
             for t in range(16)
         ]
         self.left = ctx.settings.get("home_align") == "left"
+        self.box_w, self.box_bottom = None, 88  # the left layout's box (_box_w), and the date's bottom
         self.pulse = ctx.settings.get("arrow_pulse", "faint")
         if self.pulse not in nav.ARROW_PULSES:
             self.pulse = "faint"  # a typo shouldn't quietly pick another
@@ -321,8 +324,14 @@ class Home:
         else:
             fx.neon_text(d, p, s, x, y, scale, p.cyan, p.cyan_glow, flicker)
         if left:
+            # one box (the user, 2026-11-06): the date spans the clock's width, the
+            # forecast sits under it, its icon on the box's right edge
+            box_w = self._box_w(d, scale)
+            px = max(SMALL_PX, min(DATE_MAX_PX, SMALL_PX * box_w // max(1, fx.vector_width(d, date, SMALL_PX))))
             d.set_pen(p.amber)
-            fx.vector_text(d, date, LEFT, y + 8 * scale + 5, SMALL_PX)  # 71..81
+            date_y = y + 8 * scale + 5
+            fx.vector_text(d, date, LEFT, date_y, px)
+            self.box_bottom = date_y + px
         else:
             fx.centered(d, date, y + 8 * scale + 6, 2, p.amber)  # 80..96, above the forecast at 102
 
@@ -343,9 +352,10 @@ class Home:
         if room.temp is not None:
             lines.append(("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), room_y, p.sodium, 1))
         if left:
+            y = self.box_bottom + 8
             tx = LEFT
-            widest = max(fx.vector_width(d, text, SMALL_PX) for text, _, _, _ in lines)
-            ix = min(W - 32, tx + widest + 10)
+            ix = LEFT + self._box_w(d, 5) - ICON_W  # flush with the box's right edge
+            wrap = ix - 6 - tx
         else:
             ix = 44
             tx = ix + 38
@@ -356,6 +366,14 @@ class Home:
                 fx.vector_text(d, text, tx, y + dy, SMALL_PX, wrap)
             else:
                 d.text(text, tx, y + dy, wrap, scale)
+
+    def _box_w(self, d, scale):
+        """The left layout's box: the clock's widest width, so it doesn't change with the time."""
+        if self.box_w is None:
+            self.box_w = d.measure_text("12:00", scale)
+            if not self.ctx.settings["clock_24h"]:
+                self.box_w += 4 + d.measure_text("PM", 2)
+        return self.box_w
 
     def _weather_icon(self, d, p, kind, ix, y):
         alt = (self.frame // 5) % 2  # animated, two frames
