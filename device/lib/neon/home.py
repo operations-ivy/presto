@@ -10,6 +10,7 @@ SKY_BOTTOM = 165
 GROUND = 226
 DATE_MAX_PX = 18  # the date grows to the clock's width, up to this
 ICON_GAP = 6  # between the forecast's label and the icon under it
+RAINBOW_MS = 20000  # Home's LEDs: the rainbow's drift, ms per unit of hue
 SMALL_PX = 10  # left-aligned Home's date and forecast: capitals 10 px, 1.25x the pixel font's 8
 LEFT = 14  # home_align: left: the text's margin, clear of the left arrow (y 137+)
 SUMMON_X, SUMMON_Y = 130, 150  # left layout: a tap right of this and above that summons a sighting
@@ -191,9 +192,9 @@ class Home:
     # --- leds ---
     def leds(self, presto, t):
         for i in range(7):
-            # amber at the ends, magenta in the middle, at full brightness: they face the wall
-            # and anything less barely shows (the user, 2026-11-06)
-            presto.set_led_hsv(i, 0.95 if 2 <= i <= 4 else 0.09, 1.0, 1.0)
+            # a slow rainbow drifting round them, ~20 s a turn, at full brightness: they face
+            # the wall and anything less barely shows (the user, 2026-11-06)
+            presto.set_led_hsv(i, (i / 7 + t / RAINBOW_MS) % 1.0, 1.0, 1.0)
 
     # --- drawing ---
     def draw(self, d, now_ms):
