@@ -11,8 +11,8 @@ SKY_BOTTOM = 165
 GROUND = 226
 LEFT = 14  # home_align: left: the text's margin, clear of the left arrow (y 137+)
 SUMMON_X, SUMMON_Y = 130, 150  # left layout: a tap right of this and above that summons a sighting
-ARROW_SCALE = 1  # presto#29: smaller (it was 2)
-_AW, _AH = 15 * ARROW_SCALE, 10 * ARROW_SCALE  # sprites.ARROW pointing up: 15x10
+ARROW_SCALE = 1
+_AW, _AH = 9 * ARROW_SCALE, 5 * ARROW_SCALE  # sprites.ARROW pointing up: 9x5, quiet beside the city
 ARROW_AT = {  # top-left corners; left and right sit below the forecast
     "up": ((W - _AW) // 2, 1),
     "down": ((W - _AW) // 2, H - 1 - _AH),
@@ -84,9 +84,9 @@ class Home:
             for t in range(16)
         ]
         self.left = ctx.settings.get("home_align") == "left"
-        self.pulse = ctx.settings.get("arrow_pulse", "chase")
+        self.pulse = ctx.settings.get("arrow_pulse", "faint")
         if self.pulse not in nav.ARROW_PULSES:
-            self.pulse = "chase"  # a typo shouldn't quietly pick another
+            self.pulse = "faint"  # a typo shouldn't quietly pick another
         # rare sightings in the right half of the sky: only with the left-aligned layout
         minutes = ctx.settings.get("sighting_minutes", 15) if self.left else 0
         self.sights = sightings.Sightings(ctx, minutes)

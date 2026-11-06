@@ -68,17 +68,12 @@ SPINNER = (  # our own flying car: wedge body, cockpit glow, tail and nose light
     "....P........P....",
 )
 
-ARROW = (  # Home's arms (presto#11): a chevron, highlit on its upper edge, outlined, in a glow ring
-    ".......g.......",
-    "......gKg......",
-    ".....gKWKg.....",
-    "....gKWGWKg....",
-    "...gKWGGGWKg...",
-    "..gKWGGKGGWKg..",
-    ".gKWGGKgKGGWKg.",
-    "gKWGGKg.gKGGWKg",
-    ".gKKKg...gKKKg.",
-    "..ggg.....ggg..",
+ARROW = (  # Home's arms (presto#11, #29): a small chevron, one pixel of green outlined in dark
+    "....K....",
+    "...KGK...",
+    "..KGKGK..",
+    ".KGK.KGK.",
+    "KGK...KGK",
 )
 
 SUN = (
