@@ -423,8 +423,6 @@ class Lights(Screen):
         if self._entity():
             self.ctx.hue.send(service, self._entity(), data, label)
             self.pressed, self.pressed_at = key, now_ms
-            if label.startswith("scene."):
-                self.scene = label[6:].upper()  # lit at once, not after the next poll
 
     def _lit(self, name, data, light):
         """A scene key is lit while the lamp is in its scene, and the scene last loaded
@@ -454,21 +452,22 @@ class Lights(Screen):
         now = time.ticks_ms()
         px, py, pw, ph = self.POWER
         bx, by, bw, bh = self.BAR
+        key = self._key_at(x, y) if y >= self.GRID_Y else None
         if px <= x < px + pw and py <= y < py + ph:
             self._queue("toggle", None, "light.toggle", "PWR", now)
         elif by - 4 <= y < by + bh + 4:
             cell = max(1, min(self.CELLS, (x - bx) * self.CELLS // bw + 1))
             pct = cell * 100 // self.CELLS
             self._queue("turn_on", {"brightness_pct": pct}, "light.turn_on lvl=%d" % pct, None, now)
-        elif y >= self.GRID_Y and self._key_at(x, y) is not None:
-            i = self._key_at(x, y)
-            name, data, _ = hue.SCENES[i]
-            side = self._side(x, i) if self._lit(name, data, self._light()) else 0
+        elif key is not None:
+            name, data, _ = hue.SCENES[key]
+            side = self._side(x, key) if self._lit(name, data, self._light()) else 0
             if side:  # a lit key's sides step the level (the user, 2026-11-06)
                 step = side * self.STEP_PCT
                 self._queue("turn_on", {"brightness_step_pct": step}, "light.turn_on step=%+d" % step, name, now)
             else:
                 self._queue("turn_on", data, "scene." + name.lower(), name, now)
+                self.scene = name  # lit at once, not after the next poll
         elif x >= self.INFO_X and py <= y < py + ph and len(self.ctx.hue.entities) > 1:
             self.target += 1  # the readout: the next light
             self.typed = 0
@@ -485,8 +484,7 @@ class Lights(Screen):
             self.status = ("%s %dMS" % (status, ms), ok)
             if not ok:
                 self.banner = ("ACCESS DENIED", False)
-                if label.startswith("scene."):
-                    self.scene = None
+                self.scene = None  # it didn't take: only what the lamp reports stays lit
             elif label == "scene.hax":
                 self.banner = ("ACCESS GRANTED", True)
             else:

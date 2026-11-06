@@ -100,12 +100,19 @@ WAIT = (11, 114, 115, 107, 128)
 MAX_BODY = 16384
 
 
-def _ticks_since(now_ms, then_ms):
-    return time.ticks_diff(now_ms, then_ms) if hasattr(time, "ticks_diff") else now_ms - then_ms
+try:  # MicroPython's wrapping ticks; plain arithmetic for the laptop's tests
+    _ticks_since, _ticks_add = time.ticks_diff, time.ticks_add
+except AttributeError:
+
+    def _ticks_since(a, b):
+        return a - b
+
+    def _ticks_add(a, b):
+        return a + b
 
 
-def _ticks_add(t_ms, ms):
-    return time.ticks_add(t_ms, ms) if hasattr(time, "ticks_add") else t_ms + ms
+def _errno(e):
+    return e.args[0] if e.args else None
 
 
 class Exchange:
@@ -123,7 +130,7 @@ class Exchange:
         try:
             sock.connect(addr)
         except OSError as e:
-            if e.args[0] not in WAIT:
+            if _errno(e) not in WAIT:
                 raise
 
     def step(self, now_ms):
@@ -138,14 +145,16 @@ class Exchange:
                 return None
             chunk = self.sock.recv(1024)
         except OSError as e:
-            if e.args[0] in WAIT:
+            if _errno(e) in WAIT:
                 return None
             return False, "NO ROUTE", b""
         if chunk is None:  # MicroPython: nothing yet
             return None
-        if chunk and len(self.buf) < MAX_BODY:
+        if chunk:
             self.buf.extend(chunk)
-            return None
+            if len(self.buf) < MAX_BODY:
+                return None
+            # over the cap: answer with what's here (a light's state is ~1 KB)
         top, _, rest = bytes(self.buf).partition(b"\r\n\r\n")
         status = top.split(b"\r\n", 1)[0].decode().split(" ", 1)[-1] or "NO ANSWER"  # without HTTP/1.x
         return status.split(" ", 1)[0] == "200", status, rest
@@ -165,9 +174,12 @@ class Hue:
         self.fails = 0
         self.calls = []  # (service, entity, body, label) waiting their turn
         self.to_poll = []  # entities left in this poll
-        self.job = None  # what the exchange is: ("poll", entity) or ("call", ..., started)
+        self.call_job = None  # the command on the wire: (service, entity, body, label, started)
+        self.poll_entity = None  # or the light whose state is
         self.exchange = None
-        self.sockets = sockets  # a socket factory, for the tests; None: the socket module
+        if sockets is None:
+            import socket as sockets
+        self.sockets = sockets  # getaddrinfo() and socket(): the module, or the tests' fakes
         self.last = None  # (ok, status, ms, body sent, label) of the last call
         self.seq = 0  # bumped as each call finishes
 
@@ -178,7 +190,7 @@ class Hue:
     @property
     def busy(self):
         """A command waiting or on the wire."""
-        return bool(self.calls) or (self.job is not None and self.job[0] == "call")
+        return bool(self.calls) or self.call_job is not None
 
     def led_rgb(self, entity, floor=0.6):
         """led_colour() of entity, or None while its state isn't known."""
@@ -202,37 +214,25 @@ class Hue:
             self._finish(result, now_ms)
         if self.calls:
             service, entity, body, label = self.calls.pop(0)
-            self._start(
-                ("call", service, entity, body, label, now_ms),
-                "POST",
-                "/api/services/light/" + service,
-                body,
-                now_ms,
-                TIMEOUT_S,
-            )
+            self.call_job = (service, entity, body, label, now_ms)
+            self._start("POST", "/api/services/light/" + service, body, now_ms, TIMEOUT_S)
         elif self.to_poll:
-            e = self.to_poll.pop(0)
-            self._start(("poll", e), "GET", "/api/states/" + e, b"", now_ms, POLL_TIMEOUT_S)
+            self.poll_entity = self.to_poll.pop(0)
+            self._start("GET", "/api/states/" + self.poll_entity, b"", now_ms, POLL_TIMEOUT_S)
         elif self.next_at is None or _ticks_since(now_ms, self.next_at) >= 0:
             self.next_at = _ticks_add(now_ms, POLL_MS * (1 if self.fails < 3 else 10))
             self.to_poll = list(self.entities)
 
-    def _start(self, job, method, path, body, now_ms, timeout_s):
-        self.job = job
+    def _start(self, method, path, body, now_ms, timeout_s):
         host, port = parse_url(self.url)
         head = "{} {} HTTP/1.0\r\nHost: {}\r\nAuthorization: Bearer {}\r\n".format(method, path, host, self.token)
         if body:
             head += "Content-Type: application/json\r\nContent-Length: %d\r\n" % len(body)
         try:
-            if self.sockets is None:
-                import socket
-
-                self.sockets = socket
             if self.addr is None:
                 self.addr = self.sockets.getaddrinfo(host, port)[0][-1]
-            self.exchange = Exchange(
-                self.sockets.socket(), self.addr, head.encode() + b"\r\n" + body, now_ms, int(timeout_s * 1000)
-            )
+            payload = head.encode() + b"\r\n" + body
+            self.exchange = Exchange(self.sockets.socket(), self.addr, payload, now_ms, int(timeout_s * 1000))
         except Exception as e:  # deliberately wide: OSError, gaierror, a bad port's ValueError...
             self.exchange = None
             self._finish((False, "NO ROUTE", b""), now_ms, e)
@@ -249,15 +249,16 @@ class Hue:
         if self.fails >= 3:
             self.addr = None  # it may have moved
         if self.fails == 3:
-            print("[neon] hue:", status, repr(error) if error else "")
-        job, self.job = self.job, None
-        if job[0] == "poll":
+            print("[neon] hue: {}{}".format(status, " " + repr(error) if error else ""))
+        if self.poll_entity is not None:
+            e, self.poll_entity = self.poll_entity, None
             try:
-                self.lights[job[1]] = parse_state(job[1], json.loads(body)) if ok else None
+                self.lights[e] = parse_state(e, json.loads(body)) if ok else None
             except ValueError:
-                self.lights[job[1]] = None
+                self.lights[e] = None
             return
-        _, service, entity, sent, label, started = job
+        service, entity, sent, label, started = self.call_job
+        self.call_job = None
         ms = _ticks_since(now_ms, started)
         self.last = (ok, status, ms, sent, label)
         self.seq += 1

@@ -1,5 +1,6 @@
 import calendar
 import datetime as dt
+import errno
 import types
 
 import pytest
@@ -742,7 +743,7 @@ class FakeSock:
         assert flag is False
 
     def connect(self, addr):
-        raise OSError(115)  # EINPROGRESS
+        raise OSError(errno.EINPROGRESS)
 
     def send(self, data):
         n = min(5, len(data))
@@ -752,7 +753,7 @@ class FakeSock:
     def recv(self, n):
         if self.waits:
             self.waits -= 1
-            raise OSError(11)  # EAGAIN
+            raise OSError(errno.EAGAIN)
         return self.reply.pop(0) if self.reply else b""
 
     def close(self):
@@ -772,13 +773,12 @@ class FakeSockets:
         return self.made[-1]
 
 
-class Up:
-    up = True
+NET_UP = types.SimpleNamespace(up=True)
 
 
 def run_hue(h, passes=200):
     for t in range(passes):
-        h.step(Up(), t)
+        h.step(NET_UP, t)
 
 
 def test_exchange_steps_through_connect_send_and_a_chunked_answer():
