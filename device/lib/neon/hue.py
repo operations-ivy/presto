@@ -19,13 +19,30 @@ POLL_MS = 3000
 TIMEOUT_S = 4.0  # a service call waits for the bulb's Bluetooth write
 POLL_TIMEOUT_S = 1.0  # a state read is Home Assistant's memory: it holds up the screen meanwhile
 
-# The app's scene keys: light.turn_on data, like brick-status's lamp.yaml.
+# The app's scene keys: light.turn_on data, like brick-status's lamp.yaml, and each
+# key's colour on the screen.
 SCENES = (
-    ("BRT", {"brightness_pct": 100, "color_temp_kelvin": 4000}),
-    ("RLX", {"brightness_pct": 55, "color_temp_kelvin": 2700}),
-    ("HAX", {"brightness_pct": 70, "rgb_color": [0, 255, 65]}),
-    ("NITE", {"brightness_pct": 5, "color_temp_kelvin": 2000}),
+    ("BRT", {"brightness_pct": 100, "color_temp_kelvin": 4000}, (255, 228, 190)),
+    ("RLX", {"brightness_pct": 55, "color_temp_kelvin": 2700}, (255, 150, 60)),
+    ("HAX", {"brightness_pct": 70, "rgb_color": [0, 255, 65]}, (0, 255, 65)),
+    ("NITE", {"brightness_pct": 5, "color_temp_kelvin": 2000}, (255, 80, 0)),
 )
+
+
+def scene_on(light, data, level=True):
+    """Whether the light is in the scene now: on, at its level (within 3 points; Home
+    Assistant reports 0..255; level=False: any level, once its level has been stepped),
+    and its colour temperature (within 150 K) or colour (each channel within 40: the
+    bulb's xy comes back as a nearby rgb)."""
+    if not light or not light["on"]:
+        return False
+    if level and abs(light["bri"] * 100 - data.get("brightness_pct", 100)) > 3:
+        return False
+    if "color_temp_kelvin" in data:
+        return light["kelvin"] is not None and abs(light["kelvin"] - data["color_temp_kelvin"]) <= 150
+    if "rgb_color" in data:
+        return light["rgb"] is not None and all(abs(a - b) <= 40 for a, b in zip(light["rgb"], data["rgb_color"]))
+    return True
 
 
 def parse_state(entity, js):
@@ -128,6 +145,7 @@ class Hue:
         t0 = time.ticks_ms()
         ok, status, _ = self._request("POST", "/api/services/light/" + service, body)
         self.last = (ok, status, time.ticks_diff(time.ticks_ms(), t0), body)
+        print("[neon] hue: light.%s %s -> %s, %d ms" % (service, entity, status, self.last[2]))
         self.next_at = None  # see what it did
         return ok
 

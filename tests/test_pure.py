@@ -692,11 +692,33 @@ def test_hue_bar_hexline_and_url():
 
 
 def test_hue_scenes_are_turn_on_data():
-    names = [n for n, _ in hue.SCENES]
+    names = [n for n, _, _ in hue.SCENES]
     assert names == ["BRT", "RLX", "HAX", "NITE"]
-    for _, data in hue.SCENES:
+    for _, data, rgb in hue.SCENES:
         assert 1 <= data["brightness_pct"] <= 100
         assert ("color_temp_kelvin" in data) != ("rgb_color" in data)
+        assert len(rgb) == 3 and max(rgb) == 255  # the key's colour, bright
+
+
+def lamp_state(on=True, brightness=255, **attrs):
+    return hue.parse_state(
+        "light.lamp", {"state": "on" if on else "off", "attributes": {"brightness": brightness, **attrs}}
+    )
+
+
+def test_scene_on_follows_the_lamps_state():
+    scenes = {n: data for n, data, _ in hue.SCENES}
+    nite = lamp_state(brightness=13, color_temp_kelvin=2000, color_mode="color_temp")  # 13/255 = 5 %
+    assert hue.scene_on(nite, scenes["NITE"])
+    assert not hue.scene_on(nite, scenes["BRT"]) and not hue.scene_on(nite, scenes["RLX"])
+    hax = lamp_state(brightness=179, rgb_color=[10, 255, 80], color_mode="xy")  # 70 %, a nearby rgb
+    assert hue.scene_on(hax, scenes["HAX"]) and not hue.scene_on(hax, scenes["NITE"])
+    assert not hue.scene_on(lamp_state(on=False), scenes["BRT"])
+    assert not hue.scene_on(None, scenes["BRT"])
+    brt_dim = lamp_state(brightness=200, color_temp_kelvin=4000)  # 78 %: not BRT's 100
+    assert not hue.scene_on(brt_dim, scenes["BRT"])
+    assert hue.scene_on(brt_dim, scenes["BRT"], level=False)  # stepped: still BRT's colour
+    assert not hue.scene_on(brt_dim, scenes["RLX"], level=False)  # 4000 K is not RLX's 2700
 
 
 def test_hue_without_a_token_or_lights_is_off():

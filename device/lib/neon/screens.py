@@ -379,20 +379,22 @@ class Fun(Screen):
 
 class Lights(Screen):
     """root@presto: the Hue lights through Home Assistant (hue.py), as a hacker's
-    terminal. Tap the big power key to toggle, the bar to set the level, a scene key
-    to load one (HAX: access granted). Every command shows what went over the wire.
-    Several lights (settings: lights): tap the readout to cycle them. (Taps on the top
-    band never get here: it's the way Home.)"""
+    terminal. The big power key toggles, the bar sets the level, and the four scene keys
+    (a 2x2 grid at the bottom) load a scene: a key lights up while its command is on the
+    wire, and stays filled while the lamp is in its scene; then its left and right
+    thirds step the level down and up. Several lights (settings:
+    lights): tap the readout to cycle them. (Taps on the top band never get here: it's
+    the way Home.)"""
 
     name = "lights"
     frame_ms = 90
-    X0, W0 = 12, 216  # the panels' left edge and width
-    POWER = (12, 38, 80, 74)  # x, y, w, h
-    INFO_X, INFO_Y = 100, 40
-    BAR = (12, 122, 216, 18)
+    POWER = (12, 36, 96, 70)  # x, y, w, h
+    INFO_X, INFO_Y = 118, 38
+    BAR = (12, 114, 216, 18)
     CELLS = 20
-    KEYS_Y, KEY_W, KEY_H = 148, 51, 26
-    LOG_Y = 182
+    GRID_X, GRID_Y, KEY_W, KEY_H, GAP = 12, 142, 104, 44, 8  # the scene keys, 2x2
+    PRESS_MS = 300  # a tapped key stays lit at least this long
+    STEP_PCT = 10  # a lit scene key's left/right third: the level down/up by this
     PROMPT = "root@presto:~# ./hue -i"
 
     def __init__(self, ctx):
@@ -403,7 +405,9 @@ class Lights(Screen):
         self.prompt = 0  # characters of the prompt typed so far
         self.pending = None  # (service, data, label) waiting for the next pass
         self.sending = False
-        self.log = []  # (text, kind) lines, newest last
+        self.pressed, self.pressed_at = None, 0  # the tapped key: "PWR", a scene name, or None
+        self.scene = None  # the scene last loaded here: lit at any level while its colour holds
+        self.status = None  # (text, ok) of the last command, for the readout
         self.banner, self.banner_at = None, 0  # ("ACCESS GRANTED", ok)
         self.seen = None  # the light as last drawn, to re-decrypt on a change
 
@@ -416,13 +420,28 @@ class Lights(Screen):
         e = self._entity()
         return self.ctx.hue.lights.get(e) if e else None
 
-    def _say(self, text, kind="dim"):
-        self.log = (self.log + [(text, kind)])[-4:]
-
-    def _queue(self, service, data, label):
+    def _queue(self, service, data, label, key, now_ms):
         if self.pending is None and not self.sending and self._entity():
             self.pending = (service, data, label)
-            self._say("> TX {} {}".format(label, self._entity().split(".", 1)[-1]), "text")
+            self.pressed, self.pressed_at = key, now_ms
+
+    def _lit(self, name, data, light):
+        """A scene key is lit while the lamp is in its scene, or, for the scene last
+        loaded here, in its colour at any level (its sides have stepped it)."""
+        return hue.scene_on(light, data) or (name == self.scene and hue.scene_on(light, data, level=False))
+
+    def _side(self, x, i):
+        """-1, 0 or 1: the left third, the middle or the right third of scene key i."""
+        rel = x - (self.GRID_X + (i % 2) * (self.KEY_W + self.GAP))
+        return -1 if rel < self.KEY_W // 3 else (1 if rel >= self.KEY_W * 2 // 3 else 0)
+
+    def _key_at(self, x, y):
+        """The scene key under (x, y), as its SCENES index, or None."""
+        cx = (x - self.GRID_X) // (self.KEY_W + self.GAP)
+        cy = (y - self.GRID_Y) // (self.KEY_H + self.GAP)
+        if 0 <= cx < 2 and 0 <= cy < 2:
+            return cy * 2 + cx
+        return None
 
     # --- input ---
     def enter(self):
@@ -431,18 +450,24 @@ class Lights(Screen):
         self.ctx.hue.next_at = None  # fresh state on the way in
 
     def tap(self, x, y):
+        now = time.ticks_ms()
         px, py, pw, ph = self.POWER
         bx, by, bw, bh = self.BAR
         if px <= x < px + pw and py <= y < py + ph:
-            self._queue("toggle", None, "light.toggle")
+            self._queue("toggle", None, "light.toggle", "PWR", now)
         elif by - 4 <= y < by + bh + 4:
             cell = max(1, min(self.CELLS, (x - bx) * self.CELLS // bw + 1))
             pct = cell * 100 // self.CELLS
-            self._queue("turn_on", {"brightness_pct": pct}, "light.turn_on lvl=%d" % pct)
-        elif self.KEYS_Y <= y < self.KEYS_Y + self.KEY_H:
-            i = max(0, min(len(hue.SCENES) - 1, (x - self.X0) // (self.KEY_W + 4)))
-            name, data = hue.SCENES[i]
-            self._queue("turn_on", data, "scene." + name.lower())
+            self._queue("turn_on", {"brightness_pct": pct}, "light.turn_on lvl=%d" % pct, None, now)
+        elif y >= self.GRID_Y and self._key_at(x, y) is not None:
+            i = self._key_at(x, y)
+            name, data, _ = hue.SCENES[i]
+            side = self._side(x, i) if self._lit(name, data, self._light()) else 0
+            if side:  # a lit key's sides step the level (the user, 2026-11-06)
+                step = side * self.STEP_PCT
+                self._queue("turn_on", {"brightness_step_pct": step}, "light.turn_on step=%+d" % step, name, now)
+            else:
+                self._queue("turn_on", data, "scene." + name.lower(), name, now)
         elif x >= self.INFO_X and py <= y < py + ph and len(self.ctx.hue.entities) > 1:
             self.target += 1  # the readout: the next light
             self.typed = 0
@@ -450,7 +475,7 @@ class Lights(Screen):
             self.ctx.hue.next_at = None  # tap anywhere: retry now
 
     def tick(self, now_ms):
-        """The call runs here, between frames: TX shows for a frame first."""
+        """The call runs here, between frames: the pressed key shows for a frame first."""
         lights = self.ctx.hue
         if self.pending is not None:
             if not self.sending:
@@ -462,9 +487,10 @@ class Lights(Screen):
                 ok = lights.call(service, self._entity(), data)
             finally:
                 self.sending = False
-            _, status, ms, body = lights.last
-            self._say("  " + hue.hexline(body), "dim")
-            self._say("< %s %dms" % (status, ms), "ok" if ok else "bad")
+            _, status, ms, _ = lights.last
+            self.status = ("%s %dMS" % (status, ms), ok)
+            if ok and label.startswith("scene."):
+                self.scene = label[6:].upper()
             if not ok:
                 self.banner = ("ACCESS DENIED", False)
             elif label == "scene.hax":
@@ -472,6 +498,9 @@ class Lights(Screen):
             else:
                 self.banner = None
             self.banner_at = now_ms
+        if self.pressed is not None and time.ticks_diff(now_ms, self.pressed_at) > self.PRESS_MS:
+            if self.pending is None and not self.sending:
+                self.pressed = None
         lights.step(self.ctx.net, now_ms)
         light = self._light()
         key = None if light is None else (light["on"], round(light["bri"], 2), light["rgb"])
@@ -479,58 +508,59 @@ class Lights(Screen):
             self.seen, self.typed = key, 0  # the readout decrypts again
 
     # --- drawing ---
+    def _pen(self, rgb, k=1.0):
+        """A pen for rgb scaled by k, in 4-bit steps (few pens)."""
+        r, g, b = rgb
+        return self.ctx.pens.rgb(int(r * k) & 0xF0, int(g * k) & 0xF0, int(b * k) & 0xF0)
+
     def _lamp_pen(self, light):
-        r, g, b = hue.led_colour(light, 0.6)
-        if (r, g, b) == (0, 0, 0):
-            return self.ctx.pens.faint
-        return self.ctx.pens.rgb(r & 0xF0, g & 0xF0, b & 0xF0)  # few pens: 4-bit steps
+        rgb = hue.led_colour(light, 0.6)
+        return self.ctx.pens.faint if rgb == (0, 0, 0) else self._pen(rgb)
 
     def _info(self, light):
         e = self._entity() or "--"
         if light is None:
-            return [("> " + e, "h"), ("  STATE  UNREACHABLE", "bad"), ("  tap to retry", "dim")]
+            return [("> " + e, "h"), ("STATE UNREACHABLE", "bad"), ("tap to retry", "dim")]
         if light["rgb"] and light["mode"] in ("xy", "hs", "rgb"):
             colour = "#%02X%02X%02X" % light["rgb"]
         elif light["kelvin"]:
             colour = "%dK" % light["kelvin"]
         else:
             colour = "--"
-        last = self.ctx.hue.last
-        return [
+        lines = [
             ("> " + light["name"].upper()[:14], "h"),
-            ("  PWR  " + ("ON" if light["on"] else "OFF"), "ok" if light["on"] else "dim"),
-            ("  LVL  %d%%" % round(light["bri"] * 100), "ok"),
-            ("  CLR  " + colour, "ok"),
-            ("  LINK BLE/2000", "ok"),
-            ("  RTT  " + ("%dMS" % last[2] if last else "--"), "ok"),
+            ("PWR  " + ("ON" if light["on"] else "OFF"), "ok" if light["on"] else "dim"),
+            ("LVL  %d%%" % round(light["bri"] * 100), "ok"),
+            ("CLR  " + colour, "ok"),
         ]
+        if self.status is not None:
+            text, ok = self.status
+            lines.append(("< " + text[:15], "ok" if ok else "bad"))
+        return lines
+
+    def _box(self, d, x, y, w, h, border, fill=None):
+        if fill is not None:
+            d.set_pen(fill)
+            d.rectangle(x, y, w, h)
+        d.set_pen(border)
+        d.rectangle(x, y, w, 1)
+        d.rectangle(x, y + h - 1, w, 1)
+        d.rectangle(x, y, 1, h)
+        d.rectangle(x + w - 1, y, 1, h)
 
     def draw(self, d, now_ms):
         p = self.ctx.pens
-        pens = {"h": p.phosphor, "ok": p.text, "dim": p.phosphor_dim, "bad": p.red, "text": p.phosphor}
+        pens = {"h": p.phosphor, "ok": p.text, "dim": p.phosphor_dim, "bad": p.red}
         d.set_pen(p.night)
         d.clear()
         self.rain.step_draw(d, p)
-        # the prompt, typed once per visit
+        # the prompt, typed once per visit, under Home's arrow
         self.prompt = min(len(self.PROMPT), self.prompt + 2)
         d.set_pen(p.phosphor)
-        d.text(self.PROMPT[: self.prompt], 6, 6, W, 1)
+        d.text(self.PROMPT[: self.prompt], 6, 12, W, 1)
         if self.sending or self.pending:
             d.set_pen(p.amber)
-            d.text("TX..", W - 30, 6, W, 1)
-        elif not self.ctx.hue.configured:
-            d.set_pen(p.red)
-            d.text("NO KEY", W - 42, 6, W, 1)
-        ents = self.ctx.hue.entities
-        d.set_pen(p.phosphor_dim)
-        d.text(
-            ("TARGET %s" % (self._entity() or "--"))
-            + ("  [%d/%d]" % (self.target % len(ents) + 1, len(ents)) if len(ents) > 1 else ""),
-            6,
-            22,
-            W,
-            1,
-        )
+            d.text("TX..", W - 30, 12, W, 1)
         if not self.ctx.hue.configured:
             fx.centered(d, "NO HA_TOKEN", 100, 2, p.red)
             fx.centered(d, "put HA_TOKEN in secrets.py", 124, 1, p.dim)
@@ -539,31 +569,17 @@ class Lights(Screen):
         light = self._light()
         lamp = self._lamp_pen(light)
         on = bool(light and light["on"])
-        # the power key: the lamp's own colour, breathing while on
+        busy = self.pending is not None or self.sending
+        # the power key: the lamp's own colour, breathing while on; lit while pressed
         px, py, pw, ph = self.POWER
-        d.set_pen(p.rgb(2, 10, 6))
-        d.rectangle(px, py, pw, ph)
-        d.set_pen(lamp if on else p.line)
-        for i in range(2 if on and (now_ms // 600) % 2 else 1):
-            d.rectangle(px - i, py - i, pw + 2 * i, 1)
-            d.rectangle(px - i, py + ph - 1 + i, pw + 2 * i, 1)
-            d.rectangle(px - i, py - i, 1, ph + 2 * i)
-            d.rectangle(px + pw - 1 + i, py - i, 1, ph + 2 * i)
-        word = "ON" if on else "OFF"
-        if light is None:
-            word = "??"
+        pressed = self.pressed == "PWR"
+        self._box(d, px, py, pw, ph, lamp if on else p.line, p.phosphor_dim if pressed else p.rgb(2, 10, 6))
+        if on and (now_ms // 600) % 2:
+            self._box(d, px - 1, py - 1, pw + 2, ph + 2, lamp)
+        word = "..." if pressed and busy else ("??" if light is None else ("ON" if on else "OFF"))
         tw = d.measure_text(word, 4)
-        fx.neon_text(
-            d,
-            p,
-            word,
-            px + (pw - tw) // 2,
-            py + 22,
-            4,
-            lamp if on else p.faint,
-            p.line,
-            0.1 if on and random.random() < 0.04 else 1.0,
-        )
+        flicker = 0.1 if on and random.random() < 0.04 else 1.0
+        fx.neon_text(d, p, word, px + (pw - tw) // 2, py + 22, 4, lamp if on else p.faint, p.line, flicker)
         d.set_pen(p.phosphor_dim)
         d.text("PWR", px + 4, py + ph - 10, W, 1)
         # the readout: decrypts into place after any change
@@ -576,7 +592,7 @@ class Lights(Screen):
             if left < 0 and shown and len(shown) < len(line):
                 shown = shown[:-1] + random.choice(fx.GLYPHS)
             d.set_pen(pens[kind])
-            d.text(shown, self.INFO_X, self.INFO_Y + i * 11, W, 1)
+            d.text(shown, self.INFO_X, self.INFO_Y + i * 13, W, 1)
         # the level bar: cells in the lamp's colour
         bx, by, bw, bh = self.BAR
         d.set_pen(p.rgb(2, 10, 6))
@@ -586,23 +602,26 @@ class Lights(Screen):
         for c in range(self.CELLS):
             d.set_pen(lamp if c < lit else p.line)
             d.rectangle(bx + c * cw + 1, by + 3, cw - 2, bh - 6)
-        # the scene keys
-        for i, (name, _) in enumerate(hue.SCENES):
-            kx = self.X0 + i * (self.KEY_W + 4)
-            d.set_pen(p.panel)
-            d.rectangle(kx, self.KEYS_Y, self.KEY_W, self.KEY_H)
-            d.set_pen(p.phosphor if name == "HAX" else p.line)
-            d.rectangle(kx, self.KEYS_Y, self.KEY_W, 1)
-            d.rectangle(kx, self.KEYS_Y + self.KEY_H - 1, self.KEY_W, 1)
-            d.set_pen(p.phosphor if name == "HAX" else p.text)
-            d.text(name, kx + (self.KEY_W - d.measure_text(name, 2)) // 2, self.KEYS_Y + 6, W, 2)
-        # the wire log
-        for i, (line, kind) in enumerate(self.log):
-            d.set_pen(pens.get(kind, p.dim) if i == len(self.log) - 1 else p.phosphor_dim)
-            d.text(line[:38], 6, self.LOG_Y + i * 11, W, 1)
-        if (now_ms // 500) % 2:
-            d.set_pen(p.phosphor)
-            d.rectangle(6, self.LOG_Y + len(self.log) * 11, 5, 7)
+        # the scene keys, 2x2: outlined in their colour; filled while the lamp is in the
+        # scene; bright while pressed
+        for i, (name, data, rgb) in enumerate(hue.SCENES):
+            kx = self.GRID_X + (i % 2) * (self.KEY_W + self.GAP)
+            ky = self.GRID_Y + (i // 2) * (self.KEY_H + self.GAP)
+            active = self._lit(name, data, light)
+            if self.pressed == name:
+                fill, text = self._pen(rgb), p.night
+            elif active:
+                fill, text = self._pen(rgb, 0.45), p.text
+            else:
+                fill, text = p.panel, self._pen(rgb)
+            self._box(d, kx, ky, self.KEY_W, self.KEY_H, self._pen(rgb), fill)
+            label = "..." if self.pressed == name and busy else name
+            d.set_pen(text)
+            d.text(label, kx + (self.KEY_W - d.measure_text(label, 3)) // 2, ky + (self.KEY_H - 24) // 2, W, 3)
+            if active:  # its sides step the level
+                d.set_pen(text)
+                d.text("-", kx + 5, ky + (self.KEY_H - 16) // 2, W, 2)
+                d.text("+", kx + self.KEY_W - 15, ky + (self.KEY_H - 16) // 2, W, 2)
         # ACCESS GRANTED / DENIED, for a moment
         if self.banner is not None:
             age = time.ticks_diff(now_ms, self.banner_at)
