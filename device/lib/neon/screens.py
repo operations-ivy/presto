@@ -375,3 +375,255 @@ class Fun(Screen):
         else:
             fx.centered(d, "SIGNAL LOST", 100, 3, p.violet)
         fx.centered(d, "the fun one: ideas wanted", 130, 1, p.dim)
+
+
+class Lights(Screen):
+    """root@presto: the Hue lights through Home Assistant (hue.py), as a hacker's
+    terminal. Tap the big power key to toggle, the bar to set the level, a scene key
+    to load one (HAX: access granted). Every command shows what went over the wire.
+    Several lights (settings: lights): tap the readout to cycle them. (Taps on the top
+    band never get here: it's the hidden HOME button's.)"""
+
+    name = "lights"
+    frame_ms = 90
+    X0, W0 = 12, 216  # the panels' left edge and width
+    POWER = (12, 38, 80, 74)  # x, y, w, h
+    INFO_X, INFO_Y = 100, 40
+    BAR = (12, 122, 216, 18)
+    CELLS = 20
+    KEYS_Y, KEY_W, KEY_H = 148, 51, 26
+    LOG_Y = 182
+    PROMPT = "root@presto:~# ./hue -i"
+
+    def __init__(self, ctx):
+        super().__init__(ctx)
+        self.rain = fx.GlyphRain(cols=10, scale=1, top=0, bottom=H, length=(3, 7))
+        self.target = 0
+        self.typed = 0
+        self.prompt = 0  # characters of the prompt typed so far
+        self.pending = None  # (service, data, label) waiting for the next pass
+        self.sending = False
+        self.log = []  # (text, kind) lines, newest last
+        self.banner, self.banner_at = None, 0  # ("ACCESS GRANTED", ok)
+        self.seen = None  # the light as last drawn, to re-decrypt on a change
+
+    # --- state ---
+    def _entity(self):
+        ents = self.ctx.hue.entities
+        return ents[self.target % len(ents)] if ents else None
+
+    def _light(self):
+        e = self._entity()
+        return self.ctx.hue.lights.get(e) if e else None
+
+    def _say(self, text, kind="dim"):
+        self.log = (self.log + [(text, kind)])[-4:]
+
+    def _queue(self, service, data, label):
+        if self.pending is None and not self.sending and self._entity():
+            self.pending = (service, data, label)
+            self._say("> TX {} {}".format(label, self._entity().split(".", 1)[-1]), "text")
+
+    # --- input ---
+    def enter(self):
+        super().enter()
+        self.typed = self.prompt = 0
+        self.ctx.hue.next_at = None  # fresh state on the way in
+
+    def tap(self, x, y):
+        from neon import hue
+
+        light = self._light()
+        px, py, pw, ph = self.POWER
+        bx, by, bw, bh = self.BAR
+        if px <= x < px + pw and py <= y < py + ph:
+            self._queue("toggle", None, "light.toggle")
+        elif by - 4 <= y < by + bh + 4:
+            cell = max(1, min(self.CELLS, (x - bx) * self.CELLS // bw + 1))
+            self._queue("turn_on", {"brightness_pct": cell * 100 // self.CELLS}, "light.turn_on lvl=%d" % (cell * 5))
+        elif self.KEYS_Y <= y < self.KEYS_Y + self.KEY_H:
+            i = max(0, min(len(hue.SCENES) - 1, (x - self.X0) // (self.KEY_W + 4)))
+            name, data = hue.SCENES[i]
+            self._queue("turn_on", data, "scene." + name.lower())
+        elif x >= self.INFO_X and py <= y < py + ph and len(self.ctx.hue.entities) > 1:
+            self.target += 1  # the readout: the next light
+            self.typed = 0
+        elif light is None:
+            self.ctx.hue.next_at = None  # tap anywhere: retry now
+
+    def tick(self, now_ms):
+        """The call runs here, between frames: TX shows for a frame first."""
+        hue_ = self.ctx.hue
+        if self.pending is not None:
+            if not self.sending:
+                self.sending = True
+                return
+            service, data, label = self.pending
+            self.pending = None
+            try:
+                ok = hue_.call(service, self._entity(), data)
+            finally:
+                self.sending = False
+            _, status, ms, body = hue_.last
+            from neon import hue
+
+            self._say("  " + hue.hexline(body), "dim")
+            self._say(
+                "< %s %dms" % (status.replace("HTTP/1.0 ", "").replace("HTTP/1.1 ", ""), ms), "ok" if ok else "bad"
+            )
+            if not ok:
+                self.banner = ("ACCESS DENIED", False)
+            elif label == "scene.hax":
+                self.banner = ("ACCESS GRANTED", True)
+            else:
+                self.banner = None
+            self.banner_at = now_ms
+        hue_.step(self.ctx.net, now_ms)
+        light = self._light()
+        key = None if light is None else (light["on"], round(light["bri"], 2), light["rgb"])
+        if key != self.seen:
+            self.seen, self.typed = key, 0  # the readout decrypts again
+
+    # --- drawing ---
+    def _lamp_pen(self, light):
+        from neon import hue
+
+        r, g, b = hue.led_colour(light, 0.6)
+        if (r, g, b) == (0, 0, 0):
+            return self.ctx.pens.faint
+        return self.ctx.pens.rgb(r & 0xF0, g & 0xF0, b & 0xF0)  # few pens: 4-bit steps
+
+    def _info(self, light):
+        e = self._entity() or "--"
+        if light is None:
+            return [("> " + e, "h"), ("  STATE  UNREACHABLE", "bad"), ("  tap to retry", "dim")]
+        if light["rgb"] and light["mode"] in ("xy", "hs", "rgb"):
+            colour = "#%02X%02X%02X" % light["rgb"]
+        elif light["kelvin"]:
+            colour = "%dK" % light["kelvin"]
+        else:
+            colour = "--"
+        last = self.ctx.hue.last
+        return [
+            ("> " + light["name"].upper()[:14], "h"),
+            ("  PWR  " + ("ON" if light["on"] else "OFF"), "ok" if light["on"] else "dim"),
+            ("  LVL  %d%%" % round(light["bri"] * 100), "ok"),
+            ("  CLR  " + colour, "ok"),
+            ("  LINK BLE/2000", "ok"),
+            ("  RTT  " + ("%dMS" % last[2] if last else "--"), "ok"),
+        ]
+
+    def draw(self, d, now_ms):
+        from neon import hue
+
+        p = self.ctx.pens
+        pens = {"h": p.phosphor, "ok": p.text, "dim": p.phosphor_dim, "bad": p.red, "text": p.phosphor}
+        d.set_pen(p.night)
+        d.clear()
+        self.rain.step_draw(d, p)
+        # the prompt, typed once per visit
+        self.prompt = min(len(self.PROMPT), self.prompt + 2)
+        d.set_pen(p.phosphor)
+        d.text(self.PROMPT[: self.prompt], 6, 6, W, 1)
+        if self.sending or self.pending:
+            d.set_pen(p.amber)
+            d.text("TX..", W - 30, 6, W, 1)
+        elif not self.ctx.hue.configured:
+            d.set_pen(p.red)
+            d.text("NO KEY", W - 42, 6, W, 1)
+        ents = self.ctx.hue.entities
+        d.set_pen(p.phosphor_dim)
+        d.text(
+            ("TARGET %s" % (self._entity() or "--"))
+            + ("  [%d/%d]" % (self.target % len(ents) + 1, len(ents)) if len(ents) > 1 else ""),
+            6,
+            22,
+            W,
+            1,
+        )
+        if not self.ctx.hue.configured:
+            fx.centered(d, "NO HA_TOKEN", 100, 2, p.red)
+            fx.centered(d, "put HA_TOKEN in secrets.py", 124, 1, p.dim)
+            fx.centered(d, "(home-assistant scripts/setup)", 136, 1, p.faint)
+            return
+        light = self._light()
+        lamp = self._lamp_pen(light)
+        on = bool(light and light["on"])
+        # the power key: the lamp's own colour, breathing while on
+        px, py, pw, ph = self.POWER
+        d.set_pen(p.rgb(2, 10, 6))
+        d.rectangle(px, py, pw, ph)
+        d.set_pen(lamp if on else p.line)
+        for i in range(2 if on and (now_ms // 600) % 2 else 1):
+            d.rectangle(px - i, py - i, pw + 2 * i, 1)
+            d.rectangle(px - i, py + ph - 1 + i, pw + 2 * i, 1)
+            d.rectangle(px - i, py - i, 1, ph + 2 * i)
+            d.rectangle(px + pw - 1 + i, py - i, 1, ph + 2 * i)
+        word = "ON" if on else "OFF"
+        if light is None:
+            word = "??"
+        tw = d.measure_text(word, 4)
+        fx.neon_text(
+            d,
+            p,
+            word,
+            px + (pw - tw) // 2,
+            py + 22,
+            4,
+            lamp if on else p.faint,
+            p.line,
+            0.1 if on and random.random() < 0.04 else 1.0,
+        )
+        d.set_pen(p.phosphor_dim)
+        d.text("PWR", px + 4, py + ph - 10, W, 1)
+        # the readout: decrypts into place after any change
+        lines = self._info(light)
+        self.typed = min(sum(len(t) for t, _ in lines), self.typed + 14)
+        left = self.typed
+        for i, (line, kind) in enumerate(lines):
+            shown = line[: max(0, left)]
+            left -= len(line)
+            if left < 0 and shown and len(shown) < len(line):
+                shown = shown[:-1] + random.choice(fx.GLYPHS)
+            d.set_pen(pens[kind])
+            d.text(shown, self.INFO_X, self.INFO_Y + i * 11, W, 1)
+        # the level bar: cells in the lamp's colour
+        bx, by, bw, bh = self.BAR
+        d.set_pen(p.rgb(2, 10, 6))
+        d.rectangle(bx, by, bw, bh)
+        lit = int(round((light["bri"] if light else 0) * self.CELLS))
+        cw = bw // self.CELLS
+        for c in range(self.CELLS):
+            d.set_pen(lamp if c < lit else p.line)
+            d.rectangle(bx + c * cw + 1, by + 3, cw - 2, bh - 6)
+        # the scene keys
+        for i, (name, _) in enumerate(hue.SCENES):
+            kx = self.X0 + i * (self.KEY_W + 4)
+            d.set_pen(p.panel)
+            d.rectangle(kx, self.KEYS_Y, self.KEY_W, self.KEY_H)
+            d.set_pen(p.phosphor if name == "HAX" else p.line)
+            d.rectangle(kx, self.KEYS_Y, self.KEY_W, 1)
+            d.rectangle(kx, self.KEYS_Y + self.KEY_H - 1, self.KEY_W, 1)
+            d.set_pen(p.phosphor if name == "HAX" else p.text)
+            d.text(name, kx + (self.KEY_W - d.measure_text(name, 2)) // 2, self.KEYS_Y + 6, W, 2)
+        # the wire log
+        for i, (line, kind) in enumerate(self.log):
+            d.set_pen(pens.get(kind, p.dim) if i == len(self.log) - 1 else p.phosphor_dim)
+            d.text(line[:38], 6, self.LOG_Y + i * 11, W, 1)
+        if (now_ms // 500) % 2:
+            d.set_pen(p.phosphor)
+            d.rectangle(6, self.LOG_Y + len(self.log) * 11, 5, 7)
+        # ACCESS GRANTED / DENIED, for a moment
+        if self.banner is not None:
+            age = time.ticks_diff(now_ms, self.banner_at)
+            if age > 1600:
+                self.banner = None
+            else:
+                text, ok = self.banner
+                d.set_pen(p.night)
+                d.rectangle(0, 92, W, 40)
+                x = (W - d.measure_text(text, 2)) // 2
+                if age < 400 or random.random() < 0.25:
+                    fx.glitch_text(d, p, text, x, 104, 2, 2)
+                else:
+                    fx.neon_text(d, p, text, x, 104, 2, p.phosphor if ok else p.red, p.phosphor_dim if ok else p.line)

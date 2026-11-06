@@ -40,10 +40,23 @@ chimes with a bell envelope at `chirp_volume`.
 - **Brick** (right): a Matrix terminal. The cluster feed isn't built yet, so
   for now it shows the Presto itself. Passive only: it never beeps or takes
   over the screen.
-- **???** (down): the fun one, not decided yet.
+- **Lights** (down): `root@presto`, the Hue lights through Home Assistant as a
+  hacker's terminal. The big power key toggles (it glows in the lamp's own
+  colour), the bar sets the level, the scene keys load BRT, RLX, HAX (phosphor
+  green: ACCESS GRANTED) and NITE. Every command shows the bytes it sent and
+  Home Assistant's answer with its round trip; the readout decrypts into place
+  when the light changes. `lights` in settings lists them (tap the readout to
+  cycle). It talks to `ha_url` (plain HTTP on the LAN: a TLS connect stalls the
+  Presto ~3 s) as Home Assistant's Presto user, `HA_TOKEN` in `secrets.py`.
+  (The old SIGNAL LOST screen is still `fun`.)
 - **Transitions**: TV static. The old screen breaks up into noise bars and
-  tear lines, and the new one tunes in as the static thins out. The back LEDs change with the screen and go off in a dark room;
-  the backlight follows the light sensor.
+  tear lines, and the new one tunes in as the static thins out. The backlight
+  follows the light sensor.
+- **Back LEDs**: they follow the Hue lamp (`leds_light`), its colour at full
+  saturation and never below `leds_floor` (0.6) of full brightness, since they
+  face the wall; dark when it's off, whatever the room. While Home Assistant
+  can't be reached (or there's no `HA_TOKEN`) they change with the screen and go
+  off in a dark room.
 
 Style: overwatch's palette (night violet, neon magenta, cyan, amber) plus
 Blade Runner's sodium amber, 2049's dust orange and the Matrix's phosphor
@@ -64,7 +77,9 @@ art in `device/lib/neon/sprites.py`, like brick-status's `tools/pixel_art.py`).
 ## On the device
 
 - `secrets.py` (on the Presto only, never in git): `WIFI_SSID`,
-  `WIFI_PASSWORD`, for the forecast `LATITUDE` / `LONGITUDE`, and `SIGNS`: up
+  `WIFI_PASSWORD`, `HA_TOKEN` for the Lights app (home-assistant's
+  `scripts/setup` leaves it in `~/.config/home-assistant/presto-token` on the
+  laptop: `HA_TOKEN = "..."`), for the forecast `LATITUDE` / `LONGITUDE`, and `SIGNS`: up
   to four names for Home's neon tower signs (default `("BRICK",)`), kept off
   this public repo on purpose; optionally `EMBLEM`, the sky signal's emblem on
   Home (a letter grid like `sprites.EMBLEM`: `K` dark, `.` the light; up to 30

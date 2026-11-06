@@ -18,18 +18,20 @@ DEFAULTS = {
     "temp_offset_c": 0.0,  # the sensor stick reads warm next to the board: correct it here
     "chirp": False,
     "chirp_volume": 0.005,  # 0..1 of the piezo's duty: 0.005 is a soft tick
-    "dark_lux": 3,  # below this: LEDs off, backlight at its floor
+    "dark_lux": 3,  # below this: the backlight at its floor, and the screen's LEDs off
     "photo_feed": "https://presto.brick.nozdormu.cloud",  # the upload page; empty: /sd/gallery only
     "feed_minutes": 10,  # how often to look for new photos
     "brick_feed": "https://presto.brick.nozdormu.cloud/brick.json",  # the Brick screen's uplink; empty: none
-    "plasma_url": "http://brick9000:8766/",  # the back LEDs mirror plasma's builds and deploys; empty: off
-    "mirror_level": 1.0,  # their brightness, 0..1
     "ota_url": "https://presto.brick.nozdormu.cloud/device",  # updates over Wi-Fi (presto#9); empty: USB only
     "ota_minutes": 10,  # how often to look for one
     "arm_up": "weather",
     "arm_left": "photos",
     "arm_right": "brick",
-    "arm_down": "fun",
+    "arm_down": "lights",
+    "ha_url": "http://brick2000:8123",  # Home Assistant, plain HTTP on the LAN (hue.py); empty: no lights
+    "lights": "light.lamp",  # the light app's lights, comma-separated
+    "leds_light": "light.lamp",  # the back LEDs follow this light (hue.py); empty: the screen's own
+    "leds_floor": 0.6,  # their brightness at the light's lowest: they face away from the user
 }
 
 
@@ -62,16 +64,21 @@ def run(presto, secrets):
 
     ctx.feed = photosync.Feed(s["photo_feed"], s["feed_minutes"] * 60)
     ctx.last_touch = time.ticks_ms()
-    from neon import mirror
+    from neon import hue, ota
 
-    ctx.mirror = mirror.Mirror(s["plasma_url"], s["mirror_level"])
-    from neon import ota
-
+    entities = [e.strip() for e in str(s["lights"] or "").split(",")]
+    leds_light = str(s["leds_light"] or "").strip()
+    ctx.hue = hue.Hue(
+        s["ha_url"],
+        getattr(secrets, "HA_TOKEN", ""),
+        entities + ([leds_light] if leds_light and leds_light not in entities else []),
+    )
+    ctx.lamp_rgb = None  # the back LEDs' colour while they follow the light; None: the screen's own
     ctx.ota = ota.Updater(s["ota_url"], s["ota_minutes"] * 60)
     services.log("running %s (%s)" % (ctx.ota.version or "unknown", ctx.ota.state.get("status", "no update yet")))
     ctx.dark = False
 
-    apps = {c.name: c(ctx) for c in (screens.Weather, screens.Photos, screens.Brick, screens.Fun)}
+    apps = {c.name: c(ctx) for c in (screens.Weather, screens.Photos, screens.Brick, screens.Fun, screens.Lights)}
     ctx.arms = {"up": s["arm_up"], "left": s["arm_left"], "right": s["arm_right"], "down": s["arm_down"]}
     screens_by_name = dict(apps)
     screens_by_name[nav.HOME] = home.Home(ctx)
@@ -84,7 +91,6 @@ def run(presto, secrets):
     down = None  # (x0, y0, t0, last_x, last_y, two)
     last_frame = time.ticks_ms()  # the first frame is drawn anyway: cur starts dirty
     last_light = 0
-    last_mirror, was_mirrored = 0, False
     frames, fps_at = 0, time.ticks_ms()
     tab_up = False  # the hidden HOME button is showing
 
@@ -103,7 +109,7 @@ def run(presto, secrets):
         draw(time.ticks_ms())
         presto.update()
         cur.dirty = False
-        if not (ctx.mirror.look or ctx.dark):
+        if ctx.lamp_rgb is None and not ctx.dark:
             cur.leds(presto, time.ticks_ms())
         services.log("to %s in %d ms" % (name, time.ticks_diff(time.ticks_ms(), t0)))
 
@@ -180,14 +186,18 @@ def run(presto, secrets):
             if time.ticks_diff(now, last_light) > 1000:
                 last_light = now
                 _light(ctx, presto, cur, now)
-            # the back LEDs: plasma's show while something is building or deploying
-            mirrored = ctx.mirror.step(ctx.net, now)
-            if mirrored and not ctx.dark and time.ticks_diff(now, last_mirror) >= 40:
-                last_mirror = now
-                ctx.mirror.show(presto, now)
-            if was_mirrored and not mirrored and not ctx.dark:
-                cur.leds(presto, now)  # back to the screen's own
-            was_mirrored = mirrored
+            # the back LEDs: the lamp's colour (dark with it), whenever its state is known;
+            # not dimmed in a dark room: its night light would be one
+            if leds_light:
+                ctx.hue.step(ctx.net, now)
+                rgb = ctx.hue.led_rgb(leds_light, s["leds_floor"])
+                if rgb != ctx.lamp_rgb:
+                    ctx.lamp_rgb = rgb
+                    if rgb is not None:
+                        for i in range(7):
+                            presto.set_led_rgb(i, *rgb)
+                    elif not ctx.dark:
+                        cur.leds(presto, now)  # unknown again: the screen's own
 
             # --- frame ---
             if tab_up and not plus.revealed(now):  # the HOME button has hidden again
@@ -202,7 +212,7 @@ def run(presto, secrets):
                 cur.dirty = False
                 last_frame = now
                 frames += 1
-                if cur.name == "home" and not (ctx.mirror.look or ctx.dark):
+                if cur.name == "home" and ctx.lamp_rgb is None and not ctx.dark:
                     cur.leds(presto, now)
             if time.ticks_diff(now, fps_at) > 10000:
                 print("[neon] %s %.1f fps" % (cur.name, frames * 1000 / time.ticks_diff(now, fps_at)))
@@ -218,8 +228,10 @@ def _light(ctx, presto, cur, now):
         return
     dark = ctx.dark = lux < ctx.settings["dark_lux"]
     presto.set_backlight(0.12 if dark else max(0.25, min(1.0, lux / 150)))
+    if ctx.lamp_rgb is not None:
+        return  # the LEDs follow the lamp
     if dark:
         for i in range(7):
             presto.set_led_rgb(i, 0, 0, 0)
-    elif cur.name != "home" and not ctx.mirror.look:
+    elif cur.name != "home":
         cur.leds(presto, now)

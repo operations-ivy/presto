@@ -5,8 +5,6 @@ idle_screen: photos
 photo_seconds: 300     # a new photo every 5 minutes
 photo_feed: https://presto.brick.nozdormu.cloud  # the upload page; empty: /sd/gallery only
 feed_minutes: 10       # how often to look for new photos
-plasma_url: http://brick9000:8766/  # the back LEDs mirror plasma's builds and deploys; empty: off
-mirror_level: 1.0      # their brightness while mirroring, 0..1
 ota_url: https://presto.brick.nozdormu.cloud/device  # updates over Wi-Fi (presto#9); empty: USB only
 ota_minutes: 10        # how often to look for one
 brick_feed: https://presto.brick.nozdormu.cloud/brick.json  # the Brick screen's uplink (presto-feed); empty: none
@@ -20,8 +18,12 @@ dst: us                # us, eu or none
 temp_offset_c: 0.0     # the sensor stick reads warm next to the board: correct it here
 chirp: false           # soft chimes on navigation (off by default)
 chirp_volume: 0.005    # 0..1; 0.005 is a soft tick, 0 is silent
-dark_lux: 3            # below this: LEDs off, backlight at its floor
+dark_lux: 3            # below this: backlight at its floor, the screen's LEDs off
 arm_up: weather
 arm_left: photos
 arm_right: brick
-arm_down: fun
+arm_down: lights       # the Hue lights (fun: the old SIGNAL LOST)
+ha_url: http://brick2000:8123  # Home Assistant, plain HTTP on the LAN; the token is HA_TOKEN in secrets.py
+lights: light.lamp     # the light app's lights, comma-separated
+leds_light: light.lamp # the back LEDs follow this light, off with it; empty: the screen's own
+leds_floor: 0.6        # their brightness at the light's lowest (they face away)
