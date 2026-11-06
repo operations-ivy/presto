@@ -9,7 +9,7 @@ W = H = 240  # the Presto at its native speed: 240x240, doubled to the 480 panel
 SKY_BOTTOM = 165
 GROUND = 226
 DATE_MAX_PX = 18  # the date grows to the clock's width, up to this
-ICON_W = 28  # the weather icons, 14 px at 2x
+ICON_GAP = 6  # between the forecast's label and the icon under it
 SMALL_PX = 10  # left-aligned Home's date and forecast: capitals 10 px, 1.25x the pixel font's 8
 LEFT = 14  # home_align: left: the text's margin, clear of the left arrow (y 137+)
 SUMMON_X, SUMMON_Y = 130, 150  # left layout: a tap right of this and above that summons a sighting
@@ -350,16 +350,19 @@ class Home:
         if left:
             y = self.box_bottom + 8
             tx = LEFT
-            ix = LEFT + self._box_w(d, 5) - ICON_W  # flush with the box's right edge
-            wrap = ix - 6 - tx
+            # the icon on a line of its own under the label (the user, 2026-11-06); each line
+            # shrinks to fit the box if it's wider
+            ix, iy = LEFT, y + label_y + SMALL_PX + ICON_GAP
+            wrap = self._box_w(d, 5)
         else:
-            ix = 44
+            ix, iy = 44, y
             tx = ix + 38
-        self._weather_icon(d, p, kind, ix, y)
+        self._weather_icon(d, p, kind, ix, iy)
         for text, dy, pen, scale in lines:
             d.set_pen(pen)
             if left:
-                fx.vector_text(d, text, tx, y + dy, SMALL_PX, wrap)
+                px = min(SMALL_PX, SMALL_PX * wrap // max(1, fx.vector_width(d, text, SMALL_PX)))
+                fx.vector_text(d, text, tx, y + dy, max(6, px), W)
             else:
                 d.text(text, tx, y + dy, wrap, scale)
 
