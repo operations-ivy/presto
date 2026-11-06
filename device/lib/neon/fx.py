@@ -36,6 +36,14 @@ def vector_text(display, s, x, y, px, wrap=W):
     display.set_font("bitmap8")
 
 
+def vector_width(display, s, px):
+    """vector_text()'s width for s, in px."""
+    display.set_font("sans")
+    w = display.measure_text(s, px / VECTOR_CAP)
+    display.set_font("bitmap8")
+    return w
+
+
 def neon_text(display, pens, s, x, y, scale, core, glow, flicker=1.0):
     """A neon tube: a halo offset around the core. flicker < 1 dims the halo (a stutter)."""
     if flicker > 0.3:

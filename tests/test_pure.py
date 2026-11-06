@@ -225,6 +225,23 @@ def test_vector_text_sizes_its_capitals_and_restores_the_pixel_font():
     assert y == 71 + round(fx.VECTOR_TOP * k)  # the origin sits below the capitals' top
 
 
+def test_vector_width_measures_in_the_vector_font_and_restores_the_pixel_font():
+    from neon import fx
+
+    fonts = []
+
+    class Display:
+        def set_font(self, name):
+            fonts.append(name)
+
+        def measure_text(self, s, scale):
+            assert fonts[-1] == "sans"
+            return int(len(s) * 20 * scale)
+
+    assert fx.vector_width(Display(), "52F CLOUDY", 10) == int(10 * 20 * 10 / fx.VECTOR_CAP)
+    assert fonts == ["sans", "bitmap8"]
+
+
 def test_arrow_pulse_setting():
     assert conf.load("device/settings.yaml", {})["arrow_pulse"] == "faint"
 

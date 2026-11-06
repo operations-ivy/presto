@@ -332,44 +332,45 @@ class Home:
         kind = ctx.weather.kind
         left = self.left
         y = 88 if left else 102
-        # the icon: animated, two frames
-        alt = (self.frame // 5) % 2
-        ix = LEFT if left else 44
-        if kind in ("clear", "partly"):
-            self.icons["sun" if self.day else "moon"].draw(d, p.letters, ix, y, 2)
-        else:
-            self.icons["cloud"].draw(d, p.letters, ix, y, 2)
-            if kind in ("rain", "storm"):
-                self.icons["rain_b" if alt else "rain_a"].draw(d, p.letters, ix, y + 17, 2)
-            if kind == "storm" and alt:
-                self.icons["bolt"].draw(d, p.letters, ix, y + 12, 2)
-            if kind == "snow":
-                self.icons["snow_b" if alt else "snow_a"].draw(d, p.letters, ix, y + 17, 2)
-            if kind == "fog":
-                self.icons["fog"].draw(d, p.letters, ix, y + 13, 2)
-        tx = ix + 34 if left else ix + 38
-        # each line's y and the wrap; left: SMALL_PX vector text in ~125 px; centered: the
-        # pixel font, the forecast at 2x
+        # each line's y; left: SMALL_PX vector text at the margin, under the date, the icon
+        # to its right (the user, 2026-11-06); centered: the icon, then the pixel font
         label_y, room_y, wrap = (14, 27, 125) if left else (19, 30, 158)
-
-        def line(text, dy, scale=1):
+        if not ctx.weather.configured:
+            lines = [("SET LATITUDE/", 1, p.text, 1), ("LONGITUDE", label_y, p.text, 1)]
+        else:
+            lines = [(wx.line(s, ""), 1, p.text, 2), (wx.LABELS.get(kind, "NO DATA"), label_y, p.dim, 1)]
+        room = ctx.room
+        if room.temp is not None:
+            lines.append(("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), room_y, p.sodium, 1))
+        if left:
+            tx = LEFT
+            widest = max(fx.vector_width(d, text, SMALL_PX) for text, _, _, _ in lines)
+            ix = min(W - 32, tx + widest + 10)
+        else:
+            ix = 44
+            tx = ix + 38
+        self._weather_icon(d, p, kind, ix, y)
+        for text, dy, pen, scale in lines:
+            d.set_pen(pen)
             if left:
                 fx.vector_text(d, text, tx, y + dy, SMALL_PX, wrap)
             else:
                 d.text(text, tx, y + dy, wrap, scale)
 
-        d.set_pen(p.text)
-        if not ctx.weather.configured:
-            line("SET LATITUDE/", 1)
-            line("LONGITUDE", label_y)
-        else:
-            line(wx.line(s, ""), 1, 2)
-            d.set_pen(p.dim)
-            line(wx.LABELS.get(kind, "NO DATA"), label_y)
-        room = ctx.room
-        if room.temp is not None:
-            d.set_pen(p.sodium)
-            line("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), room_y)
+    def _weather_icon(self, d, p, kind, ix, y):
+        alt = (self.frame // 5) % 2  # animated, two frames
+        if kind in ("clear", "partly"):
+            self.icons["sun" if self.day else "moon"].draw(d, p.letters, ix, y, 2)
+            return
+        self.icons["cloud"].draw(d, p.letters, ix, y, 2)
+        if kind in ("rain", "storm"):
+            self.icons["rain_b" if alt else "rain_a"].draw(d, p.letters, ix, y + 17, 2)
+        if kind == "storm" and alt:
+            self.icons["bolt"].draw(d, p.letters, ix, y + 12, 2)
+        if kind == "snow":
+            self.icons["snow_b" if alt else "snow_a"].draw(d, p.letters, ix, y + 17, 2)
+        if kind == "fog":
+            self.icons["fog"].draw(d, p.letters, ix, y + 13, 2)
 
     def _arms(self, d, p, now_ms):
         # no app names (presto#11): just the four chevrons, pulsing green <-> black
