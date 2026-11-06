@@ -242,6 +242,22 @@ def test_vector_width_measures_in_the_vector_font_and_restores_the_pixel_font():
     assert fonts == ["sans", "bitmap8"]
 
 
+def test_fit_px_sizes_text_to_a_width_within_its_bounds():
+    from neon import fx
+
+    class Display:  # 2 px of width per character per px of capital height
+        def set_font(self, name):
+            pass
+
+        def measure_text(self, s, scale):
+            return int(len(s) * 2 * scale * fx.VECTOR_CAP)
+
+    d = Display()
+    assert fx.fit_px(d, "ABCDE", 100, 6, 18) == 10  # 5 chars x 2 x 10 px = 100
+    assert fx.fit_px(d, "AB", 100, 6, 18) == 18  # would be 25: held at the top
+    assert fx.fit_px(d, "A" * 50, 100, 6, 18) == 6  # would be 1: held at the bottom
+
+
 def test_arrow_pulse_setting():
     assert conf.load("device/settings.yaml", {})["arrow_pulse"] == "faint"
 

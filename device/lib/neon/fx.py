@@ -44,6 +44,15 @@ def vector_width(display, s, px):
     return w
 
 
+MIN_PX = 6  # the smallest vector text fit_px() shrinks to
+FIT_REF_PX = 10  # fit_px() measures at this size and scales
+
+
+def fit_px(display, s, width, lo, hi):
+    """The capital height (lo..hi px) at which s's vector_text() is width wide."""
+    return max(lo, min(hi, FIT_REF_PX * width // max(1, vector_width(display, s, FIT_REF_PX))))
+
+
 def neon_text(display, pens, s, x, y, scale, core, glow, flicker=1.0):
     """A neon tube: a halo offset around the core. flicker < 1 dims the halo (a stutter)."""
     if flicker > 0.3:

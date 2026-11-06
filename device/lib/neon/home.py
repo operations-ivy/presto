@@ -327,7 +327,7 @@ class Home:
             # one box (the user, 2026-11-06): the date spans the clock's width, the
             # forecast sits under it, its icon on the box's right edge
             box_w = self._box_w(d, scale)
-            px = max(SMALL_PX, min(DATE_MAX_PX, SMALL_PX * box_w // max(1, fx.vector_width(d, date, SMALL_PX))))
+            px = fx.fit_px(d, date, box_w, SMALL_PX, DATE_MAX_PX)  # grows to span the box
             d.set_pen(p.amber)
             date_y = y + 8 * scale + 5
             fx.vector_text(d, date, LEFT, date_y, px)
@@ -339,33 +339,26 @@ class Home:
         ctx = self.ctx
         s = ctx.weather.summary
         kind = ctx.weather.kind
-        left = self.left
-        y = 88 if left else 102
-        # each line's y; left: SMALL_PX vector text at the margin, under the date, the icon
-        # to its right (the user, 2026-11-06); centered: the icon, then the pixel font
-        label_y, wrap = (14, 125) if left else (19, 158)
+        if self.left:
+            # under the date, at the box's margin, in SMALL_PX vector text (each line shrinks
+            # to fit the box if it's wider); the icon on a line of its own under the label
+            # (the user, 2026-11-06)
+            y, label_y, wrap = self.box_bottom + 8, 14, self._box_w(d, 5)
+            tx, ix, iy = LEFT, LEFT, y + label_y + SMALL_PX + ICON_GAP
+        else:  # the icon, then the pixel font, the forecast at 2x
+            y, label_y, wrap = 102, 19, 158
+            tx, ix, iy = 82, 44, y
         if not ctx.weather.configured:
-            lines = [("SET LATITUDE/", 1, p.text, 1), ("LONGITUDE", label_y, p.text, 1)]
+            lines = [("SET LATITUDE/", 1, p.text), ("LONGITUDE", label_y, p.text)]
         else:
-            lines = [(wx.line(s, ""), 1, p.text, 2), (wx.LABELS.get(kind, "NO DATA"), label_y, p.dim, 1)]
-        if left:
-            y = self.box_bottom + 8
-            tx = LEFT
-            # the icon on a line of its own under the label (the user, 2026-11-06); each line
-            # shrinks to fit the box if it's wider
-            ix, iy = LEFT, y + label_y + SMALL_PX + ICON_GAP
-            wrap = self._box_w(d, 5)
-        else:
-            ix, iy = 44, y
-            tx = ix + 38
+            lines = [(wx.line(s, ""), 1, p.text), (wx.LABELS.get(kind, "NO DATA"), label_y, p.dim)]
         self._weather_icon(d, p, kind, ix, iy)
-        for text, dy, pen, scale in lines:
+        for n, (text, dy, pen) in enumerate(lines):
             d.set_pen(pen)
-            if left:
-                px = min(SMALL_PX, SMALL_PX * wrap // max(1, fx.vector_width(d, text, SMALL_PX)))
-                fx.vector_text(d, text, tx, y + dy, max(6, px), W)
+            if self.left:
+                fx.vector_text(d, text, tx, y + dy, fx.fit_px(d, text, wrap, fx.MIN_PX, SMALL_PX), W)
             else:
-                d.text(text, tx, y + dy, wrap, scale)
+                d.text(text, tx, y + dy, wrap, 2 if n == 0 and ctx.weather.configured else 1)
 
     def _box_w(self, d, scale):
         """The left layout's box: the clock's widest width, so it doesn't change with the time."""
