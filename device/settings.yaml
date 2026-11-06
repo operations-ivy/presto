@@ -19,7 +19,7 @@ dst: us                # us, eu or none
 temp_offset_c: 0.0     # the sensor stick reads warm next to the board: correct it here
 chirp: false           # soft chimes on navigation (off by default)
 chirp_volume: 0.005    # 0..1; 0.005 is a soft tick, 0 is silent
-dark_lux: 3            # below this: backlight at its floor, the screen's LEDs off
+dark_lux: 3            # below this: backlight at its floor (the LEDs stay on)
 arm_up: weather
 arm_left: photos
 arm_right: brick

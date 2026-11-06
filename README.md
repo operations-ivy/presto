@@ -54,9 +54,9 @@ chimes with a bell envelope at `chirp_volume`.
   follows the light sensor.
 - **Back LEDs**: they follow the Hue lamp (`leds_light`), its colour at full
   saturation and at full brightness (`leds_floor` 1.0, whatever the lamp's level), since they
-  face the wall; dark when it's off, whatever the room. While Home Assistant
-  can't be reached (or there's no `HA_TOKEN`) they change with the screen and go
-  off in a dark room.
+  face the wall; dark when it's off. While Home Assistant can't be reached (or
+  there's no `HA_TOKEN`) they change with the screen, at full brightness. A dark
+  room only dims the backlight: the LEDs stay on, where they show best.
 
 Style: overwatch's palette (night violet, neon magenta, cyan, amber) plus
 Blade Runner's sodium amber, 2049's dust orange and the Matrix's phosphor

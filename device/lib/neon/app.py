@@ -19,7 +19,7 @@ DEFAULTS = {
     "temp_offset_c": 0.0,  # the sensor stick reads warm next to the board: correct it here
     "chirp": False,
     "chirp_volume": 0.005,  # 0..1 of the piezo's duty: 0.005 is a soft tick
-    "dark_lux": 3,  # below this: the backlight at its floor, and the screen's LEDs off
+    "dark_lux": 3,  # below this: the backlight at its floor (the LEDs stay on: the user, 2026-11-06)
     "photo_feed": "https://presto.brick.nozdormu.cloud",  # the upload page; empty: /sd/gallery only
     "feed_minutes": 10,  # how often to look for new photos
     "brick_feed": "https://presto.brick.nozdormu.cloud/brick.json",  # the Brick screen's uplink; empty: none
@@ -77,15 +77,13 @@ def run(presto, secrets):
     ctx.ota_shown = False
 
     def ota_show(frac):
-        """The update's LED show (ota.leds), bright; not in a dark room: updates come at night too."""
+        """The update's LED show (ota.leds), bright."""
         ctx.ota_shown = True
-        if not ctx.dark:
-            for i, rgb in enumerate(ota.leds(frac, time.ticks_ms())):
-                presto.set_led_rgb(i, *rgb)
+        for i, rgb in enumerate(ota.leds(frac, time.ticks_ms())):
+            presto.set_led_rgb(i, *rgb)
 
     ctx.ota = ota.Updater(s["ota_url"], s["ota_minutes"] * 60, show=ota_show)
     services.log("running {} ({})".format(ctx.ota.version or "unknown", ctx.ota.state.get("status", "no update yet")))
-    ctx.dark = False
 
     apps = {c.name: c(ctx) for c in (screens.Weather, screens.Photos, screens.Brick, screens.Fun, screens.Lights)}
     ctx.arms = {"up": s["arm_up"], "left": s["arm_left"], "right": s["arm_right"], "down": s["arm_down"]}
@@ -118,7 +116,7 @@ def run(presto, secrets):
         draw(time.ticks_ms())
         presto.update()
         cur.dirty = False
-        if ctx.lamp_rgb is None and not ctx.dark:
+        if ctx.lamp_rgb is None:
             cur.leds(presto, time.ticks_ms())
         services.log("to %s in %d ms" % (name, time.ticks_diff(time.ticks_ms(), t0)))
 
@@ -194,8 +192,7 @@ def run(presto, secrets):
             ctx.ota.step(ctx.net, last_touch, now)
             if ctx.ota_shown:  # a download that didn't end in a restart: the LEDs come back
                 ctx.ota_shown, ctx.lamp_rgb = False, None
-                if not ctx.dark:
-                    cur.leds(presto, now)
+                cur.leds(presto, now)
             if time.ticks_diff(now, last_light) > 1000:
                 last_light = now
                 _light(ctx, presto, cur, now)
@@ -215,7 +212,7 @@ def run(presto, secrets):
                 cur.dirty = False
                 last_frame = now
                 frames += 1
-                if cur.name == "home" and ctx.lamp_rgb is None and not ctx.dark:
+                if cur.name == "home" and ctx.lamp_rgb is None:
                     cur.leds(presto, now)
             if time.ticks_diff(now, fps_at) > 10000:
                 print(f"[neon] {cur.name} {frames * 1000 / time.ticks_diff(now, fps_at):.1f} fps")
@@ -229,19 +226,15 @@ def _light(ctx, presto, cur, now):
     lux = ctx.room.lux
     if lux is None:
         return
-    dark = ctx.dark = lux < ctx.settings["dark_lux"]
+    dark = lux < ctx.settings["dark_lux"]
     presto.set_backlight(0.12 if dark else max(0.25, min(1.0, lux / 150)))
-    if ctx.lamp_rgb is not None:
-        return  # the LEDs follow the lamp
-    if dark:
-        _fill(presto, (0, 0, 0))
-    elif cur.name != "home":
-        cur.leds(presto, now)
+    if ctx.lamp_rgb is None and cur.name != "home":
+        cur.leds(presto, now)  # the LEDs stay on in a dark room, where they show best
 
 
 def _follow_lamp(ctx, presto, cur, now, light, floor):
-    """The back LEDs: the lamp's colour (dark with it) whenever its state is known; not
-    dimmed in a dark room, which its night light would make one. Unknown: the screen's own."""
+    """The back LEDs: the lamp's colour (dark with it) whenever its state is known.
+    Unknown: the screen's own."""
     ctx.hue.step(ctx.net, now)
     rgb = ctx.hue.led_rgb(light, floor)
     if rgb == ctx.lamp_rgb:
@@ -249,7 +242,7 @@ def _follow_lamp(ctx, presto, cur, now, light, floor):
     ctx.lamp_rgb = rgb
     if rgb is not None:
         _fill(presto, rgb)
-    elif not ctx.dark:
+    else:
         cur.leds(presto, now)
 
 
