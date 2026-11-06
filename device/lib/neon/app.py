@@ -13,6 +13,7 @@ DEFAULTS = {
     "home_sky": "night",  # Home's sky: night always, or "daylight" (2049 haze from sunrise to sunset)
     "home_align": "left",  # Home's clock, date and forecast: left (room for the sightings) or center
     "sighting_minutes": 15,  # left-aligned Home: a rare sighting this often, on average; 0: none
+    "arrow_pulse": "chase",  # Home's arrows: chase, blink or breathe
     "utc_offset": -5,  # standard time, hours (the forecast's own offset wins once it's fetched)
     "dst": "us",  # us, eu or none
     "temp_offset_c": 0.0,  # the sensor stick reads warm next to the board: correct it here
@@ -68,7 +69,7 @@ def run(presto, secrets):
     from neon import ota
 
     ctx.ota = ota.Updater(s["ota_url"], s["ota_minutes"] * 60)
-    services.log("running %s (%s)" % (ctx.ota.version or "unknown", ctx.ota.state.get("status", "no update yet")))
+    services.log("running {} ({})".format(ctx.ota.version or "unknown", ctx.ota.state.get("status", "no update yet")))
     ctx.dark = False
 
     apps = {c.name: c(ctx) for c in (screens.Weather, screens.Photos, screens.Brick, screens.Fun)}
@@ -205,7 +206,7 @@ def run(presto, secrets):
                 if cur.name == "home" and not (ctx.mirror.look or ctx.dark):
                     cur.leds(presto, now)
             if time.ticks_diff(now, fps_at) > 10000:
-                print("[neon] %s %.1f fps" % (cur.name, frames * 1000 / time.ticks_diff(now, fps_at)))
+                print("[neon] {} {:.1f} fps".format(cur.name, frames * 1000 / time.ticks_diff(now, fps_at)))
                 frames, fps_at = 0, now
             time.sleep_ms(5)
     finally:

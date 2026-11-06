@@ -171,6 +171,32 @@ def test_zone(x, y, want):
     assert nav.zone(x, y) == want
 
 
+# --- Home's arrows (presto#29) -----------------------------------------------
+
+
+@pytest.mark.parametrize("pulse", nav.ARROW_PULSES)
+@pytest.mark.parametrize("t", [0, 100, 450, 1234, 1799, 2599, 9999])
+def test_arrow_levels_cover_all_four_within_range(pulse, t):
+    levels = nav.arrow_levels(pulse, t)
+    assert set(levels) == set(nav.ARROW_WAYS)
+    assert all(0.0 <= v <= 1.0 for v in levels.values())
+
+
+def test_the_chase_runs_clockwise_and_never_goes_dark():
+    brightest = [max(nav.ARROW_WAYS, key=nav.arrow_levels("chase", t).get) for t in (0, 450, 900, 1350)]
+    assert brightest == ["up", "right", "down", "left"]
+    assert min(min(nav.arrow_levels("chase", t).values()) for t in range(0, 1800, 50)) >= nav.ARROW_DIM
+
+
+def test_the_blink_is_twice_then_rest():
+    lit = [nav.arrow_levels("blink", t)["up"] == 1.0 for t in (50, 180, 300, 500, 2000)]
+    assert lit == [True, False, True, False, False]
+
+
+def test_arrow_pulse_setting():
+    assert conf.load("device/settings.yaml", {})["arrow_pulse"] == "chase"
+
+
 def test_taps_open_apps_and_come_home():
     p = nav.Plus(ARMS)
     assert p.tap(120, 120) is None  # the middle of Home: Home's own tap
@@ -500,8 +526,10 @@ def test_sky_signal_emblem_from_secrets_or_ours():
 
 # --- Home's sky (2026-11-04: haze by day, grey when the weather is, night after sunset) ---
 def test_sunrise_and_sunset_from_the_forecast():
-    data = {"current": {"weather_code": 0, "is_day": 1},
-            "daily": {"sunrise": ["2026-11-04T06:41"], "sunset": ["2026-11-04T17:03"]}}
+    data = {
+        "current": {"weather_code": 0, "is_day": 1},
+        "daily": {"sunrise": ["2026-11-04T06:41"], "sunset": ["2026-11-04T17:03"]},
+    }
     s = wx.summarize(data)
     assert (s["sunrise"], s["sunset"]) == (401, 1023)
     assert wx.minute_of(None) is None and wx.minute_of("garbage") is None
@@ -520,10 +548,18 @@ def test_daytime_falls_back_to_the_forecasts_is_day():
 
 @pytest.mark.parametrize(
     "kind,day,sky",
-    [("clear", True, "haze"), ("partly", True, "grey_haze"), ("cloudy", True, "overcast"),
-     ("rain", True, "overcast"), ("fog", True, "overcast"), ("snow", True, "overcast"),
-     ("storm", True, "overcast"), ("unknown", True, "overcast"), ("clear", False, "night"),
-     ("rain", False, "night")],
+    [
+        ("clear", True, "haze"),
+        ("partly", True, "grey_haze"),
+        ("cloudy", True, "overcast"),
+        ("rain", True, "overcast"),
+        ("fog", True, "overcast"),
+        ("snow", True, "overcast"),
+        ("storm", True, "overcast"),
+        ("unknown", True, "overcast"),
+        ("clear", False, "night"),
+        ("rain", False, "night"),
+    ],
 )
 def test_sky_by_weather_and_time(kind, day, sky):
     assert wx.sky(kind, day) == sky
@@ -568,14 +604,16 @@ def test_sync_survives_a_card_error(monkeypatch):
     monkeypatch.setattr(photosync.time, "ticks_add", lambda a, b: a + b, raising=False)
     remounted = []
     monkeypatch.setattr(card, "failed", remounted.append)
-    assert feed.step(types.SimpleNamespace(up=True), -10**6) is False
+    assert feed.step(types.SimpleNamespace(up=True), -(10**6)) is False
     assert [e.args for e in remounted] == [(5,)]  # the card is remounted for the retry
     assert feed.queue == [] and feed.dl is None
 
 
 def test_uplink_maintenance_is_calm():
-    data = dict(FEED, nodes=[{"n": "brick666", "ok": 0, "k8s": 1, "maint": 7200},
-                             {"n": "brick1982", "ok": 0, "k8s": 0, "maint": -1}])
+    data = dict(
+        FEED,
+        nodes=[{"n": "brick666", "ok": 0, "k8s": 1, "maint": 7200}, {"n": "brick1982", "ok": 0, "k8s": 0, "maint": -1}],
+    )
     lines = uplink.cluster(data)
     assert ("  BRICK666   MAINT 2H", uplink.OK) in lines
     assert ("  BRICK1982  MAINT NO END", uplink.OK) in lines
