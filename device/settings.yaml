@@ -13,6 +13,7 @@ clock_24h: false       # false: 10:47 PM
 home_sky: night        # night always; daylight: 2049 haze from sunrise to sunset
 home_align: left       # Home's clock, date and forecast: center or left
 sighting_minutes: 15   # left-aligned Home: a kaiju, the sky signal, fireworks or a UFO this often; 0: none
+arrow_pulse: chase     # Home's arrows: chase (a light runs round them), blink (twice, then rest) or breathe
 utc_offset: -5         # standard time, hours; the forecast's own offset wins once fetched
 dst: us                # us, eu or none
 temp_offset_c: 0.0     # the sensor stick reads warm next to the board: correct it here

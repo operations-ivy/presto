@@ -6,6 +6,8 @@ Home: a tap there raises it, a second tap goes Home. A two-finger tap goes Home
 from anywhere. `swipe()` is kept for gestures later.
 """
 
+import math
+
 HOME = "home"
 OPPOSITE = {"up": "down", "down": "up", "left": "right", "right": "left"}
 
@@ -125,3 +127,27 @@ class Plus:
         if name == HOME:
             return OPPOSITE[self.where[self.current]] if self.current != HOME else None
         return self.where[name]
+
+
+# --- Home's arrows (presto#29) ---
+ARROW_WAYS = ("up", "right", "down", "left")  # clockwise: the chase's order
+ARROW_DIM = 0.25  # between pulses: still there, over the city
+ARROW_PULSES = ("chase", "blink", "breathe")
+CHASE_STEP_MS = 450  # the light's time on each arrow
+CHASE_TAIL = 1.5  # in arrows: how far behind the light its glow fades out
+BLINK_MS, BLINK_REST_MS = 120, 2000  # on, off, on, off, then rest
+BREATHE_MS = 480  # the old pulse's sine: ~3 s a breath
+
+
+def arrow_level(pulse, t, i):
+    """Arrow i's brightness (ARROW_WAYS order), 0..1, at t ms. chase: a light runs
+    clockwise round the four with a fading tail; blink: all four blink twice, then
+    rest; breathe: all four fade together (the old pulse). One float, no allocation:
+    it runs four times a frame."""
+    if pulse == "chase":
+        behind = ((t % (4 * CHASE_STEP_MS)) / CHASE_STEP_MS - i) % 4
+        return ARROW_DIM + (1 - ARROW_DIM) * max(0.0, 1 - behind / CHASE_TAIL)
+    if pulse == "blink":
+        p = t % (4 * BLINK_MS + BLINK_REST_MS)
+        return 1.0 if p < 3 * BLINK_MS and (p // BLINK_MS) % 2 == 0 else ARROW_DIM
+    return (1 + math.sin(t / BREATHE_MS)) / 2

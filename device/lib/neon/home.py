@@ -4,15 +4,15 @@ import math
 import random
 import time
 
-from neon import fx, sightings, sprites, theme, tz, wx
+from neon import fx, nav, sightings, sprites, theme, tz, wx
 
 W = H = 240  # the Presto at its native speed: 240x240, doubled to the 480 panel
 SKY_BOTTOM = 165
 GROUND = 226
 LEFT = 14  # home_align: left: the text's margin, clear of the left arrow (y 137+)
 SUMMON_X, SUMMON_Y = 130, 150  # left layout: a tap right of this and above that summons a sighting
-ARROW_SCALE = 2
-_AW, _AH = 15 * ARROW_SCALE, 10 * ARROW_SCALE  # sprites.ARROW pointing up: 30x20
+ARROW_SCALE = 1  # presto#29: smaller (it was 2)
+_AW, _AH = 15 * ARROW_SCALE, 10 * ARROW_SCALE  # sprites.ARROW pointing up: 15x10
 ARROW_AT = {  # top-left corners; left and right sit below the forecast
     "up": ((W - _AW) // 2, 1),
     "down": ((W - _AW) // 2, H - 1 - _AH),
@@ -84,6 +84,9 @@ class Home:
             for t in range(16)
         ]
         self.left = ctx.settings.get("home_align") == "left"
+        self.pulse = ctx.settings.get("arrow_pulse", "chase")
+        if self.pulse not in nav.ARROW_PULSES:
+            self.pulse = "chase"  # a typo shouldn't quietly pick another
         # rare sightings in the right half of the sky: only with the left-aligned layout
         minutes = ctx.settings.get("sighting_minutes", 15) if self.left else 0
         self.sights = sightings.Sightings(ctx, minutes)
@@ -360,9 +363,9 @@ class Home:
             d.text("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), tx, y + room_y, wrap, 1)
 
     def _arms(self, d, p, now_ms):
-        # no app names (presto#11): just the four chevrons, fading slowly green <-> black
-        # (a ~3 s breath). Each sits inside its edge's tap band (nav.EDGE).
-        level = (1 + math.sin(now_ms / 480)) / 2
-        pens = self.arrow_pens[int(level * 15)]
-        for way, (x, y) in ARROW_AT.items():
-            self.arrows[way].draw(d, pens, x, y, ARROW_SCALE)
+        # no app names (presto#11): just the four chevrons, pulsing green <-> black
+        # (settings: arrow_pulse). Each sits inside its edge's tap band (nav.EDGE).
+        for i, way in enumerate(nav.ARROW_WAYS):
+            x, y = ARROW_AT[way]
+            level = nav.arrow_level(self.pulse, now_ms, i)
+            self.arrows[way].draw(d, self.arrow_pens[int(level * 15)], x, y, ARROW_SCALE)

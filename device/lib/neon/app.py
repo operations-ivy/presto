@@ -13,6 +13,7 @@ DEFAULTS = {
     "home_sky": "night",  # Home's sky: night always, or "daylight" (2049 haze from sunrise to sunset)
     "home_align": "left",  # Home's clock, date and forecast: left (room for the sightings) or center
     "sighting_minutes": 15,  # left-aligned Home: a rare sighting this often, on average; 0: none
+    "arrow_pulse": "chase",  # Home's arrows: chase, blink or breathe
     "utc_offset": -5,  # standard time, hours (the forecast's own offset wins once it's fetched)
     "dst": "us",  # us, eu or none
     "temp_offset_c": 0.0,  # the sensor stick reads warm next to the board: correct it here
