@@ -343,14 +343,11 @@ class Home:
         y = 88 if left else 102
         # each line's y; left: SMALL_PX vector text at the margin, under the date, the icon
         # to its right (the user, 2026-11-06); centered: the icon, then the pixel font
-        label_y, room_y, wrap = (14, 27, 125) if left else (19, 30, 158)
+        label_y, wrap = (14, 125) if left else (19, 158)
         if not ctx.weather.configured:
             lines = [("SET LATITUDE/", 1, p.text, 1), ("LONGITUDE", label_y, p.text, 1)]
         else:
             lines = [(wx.line(s, ""), 1, p.text, 2), (wx.LABELS.get(kind, "NO DATA"), label_y, p.dim, 1)]
-        room = ctx.room
-        if room.temp is not None:
-            lines.append(("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), room_y, p.sodium, 1))
         if left:
             y = self.box_bottom + 8
             tx = LEFT

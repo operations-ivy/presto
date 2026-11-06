@@ -31,8 +31,8 @@ chimes with a bell envelope at `chirp_volume`.
 
 - **Home**: a rainy city at night. Skyline with flickering windows, a neon
   BRICK sign, a flying car now and then, a neon-tube clock (12- or 24-hour)
-  that glitches every 20-30 s, the date, the forecast with an animated icon,
-  and the room's temperature. The scene follows the forecast: rain when it
+  that glitches every 20-30 s, the date and the forecast with an animated
+  icon (the room's readings are on Weather). The scene follows the forecast: rain when it
   rains, stars on a clear night, 2049 dust on a hot day.
 - **Weather** (up): outside temperature in a haze that's warm or cold, and the
   room's sensors on a flickering hologram panel.
