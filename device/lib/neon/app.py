@@ -32,7 +32,7 @@ DEFAULTS = {
     "ha_url": "http://brick2000:8123",  # Home Assistant, plain HTTP on the LAN (hue.py); empty: no lights
     "lights": "light.lamp",  # the light app's lights, comma-separated
     "leds_light": "light.lamp",  # the back LEDs follow this light (hue.py); empty: the screen's own
-    "leds_floor": 0.6,  # their brightness at the light's lowest: they face away from the user
+    "leds_floor": 1.0,  # their brightness at the light's lowest: full, they face the wall
 }
 
 

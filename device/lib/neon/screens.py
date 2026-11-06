@@ -33,7 +33,7 @@ class Screen:
             if self.led_hue is None:
                 presto.set_led_rgb(i, 0, 0, 0)
             else:
-                presto.set_led_hsv(i, self.led_hue, 1.0, 0.12)
+                presto.set_led_hsv(i, self.led_hue, 1.0, 1.0)  # full: they face the wall
 
     def draw(self, d, now_ms):
         raise NotImplementedError
@@ -48,7 +48,7 @@ class Weather(Screen):
 
     def leds(self, presto, t):
         for i in range(7):  # hologram shimmer: pink and blue chasing
-            presto.set_led_hsv(i, 0.6 + 0.3 * (((t // 120) + i) % 2), 0.8, 0.1)
+            presto.set_led_hsv(i, 0.6 + 0.3 * (((t // 120) + i) % 2), 0.8, 1.0)
 
     def draw(self, d, now_ms):
         ctx, p = self.ctx, self.ctx.pens

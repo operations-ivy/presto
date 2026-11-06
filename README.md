@@ -53,7 +53,7 @@ chimes with a bell envelope at `chirp_volume`.
   tear lines, and the new one tunes in as the static thins out. The backlight
   follows the light sensor.
 - **Back LEDs**: they follow the Hue lamp (`leds_light`), its colour at full
-  saturation and never below `leds_floor` (0.6) of full brightness, since they
+  saturation and at full brightness (`leds_floor` 1.0, whatever the lamp's level), since they
   face the wall; dark when it's off, whatever the room. While Home Assistant
   can't be reached (or there's no `HA_TOKEN`) they change with the screen and go
   off in a dark room.

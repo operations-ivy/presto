@@ -477,7 +477,7 @@ def test_brick_feed_setting():
 
 def test_leds_follow_the_lamp_by_default():
     s = conf.load("device/settings.yaml", {})
-    assert s["leds_light"] == "light.lamp" and s["leds_floor"] == 0.6
+    assert s["leds_light"] == "light.lamp" and s["leds_floor"] == 1.0
     assert "plasma_url" not in s
 
 

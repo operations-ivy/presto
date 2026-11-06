@@ -1,6 +1,5 @@
 """Home: a Blade Runner night. Skyline, rain, a neon-sign clock, the forecast, and the four arms."""
 
-import math
 import random
 import time
 
@@ -191,10 +190,10 @@ class Home:
 
     # --- leds ---
     def leds(self, presto, t):
-        v = 0.08 + 0.07 * (1 + math.sin(t / 900)) / 2
         for i in range(7):
-            # amber at the ends, magenta in the middle, breathing
-            presto.set_led_hsv(i, 0.95 if 2 <= i <= 4 else 0.09, 1.0, v)
+            # amber at the ends, magenta in the middle, at full brightness: they face the wall
+            # and anything less barely shows (the user, 2026-11-06)
+            presto.set_led_hsv(i, 0.95 if 2 <= i <= 4 else 0.09, 1.0, 1.0)
 
     # --- drawing ---
     def draw(self, d, now_ms):
