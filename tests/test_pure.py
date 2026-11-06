@@ -176,21 +176,23 @@ def test_zone(x, y, want):
 
 @pytest.mark.parametrize("pulse", nav.ARROW_PULSES)
 @pytest.mark.parametrize("t", [0, 100, 450, 1234, 1799, 2599, 9999])
-def test_arrow_levels_cover_all_four_within_range(pulse, t):
-    levels = nav.arrow_levels(pulse, t)
-    assert set(levels) == set(nav.ARROW_WAYS)
-    assert all(0.0 <= v <= 1.0 for v in levels.values())
+def test_arrow_levels_stay_in_range(pulse, t):
+    assert all(0.0 <= nav.arrow_level(pulse, t, i) <= 1.0 for i in range(4))
 
 
-def test_the_chase_runs_clockwise_and_never_goes_dark():
-    brightest = [max(nav.ARROW_WAYS, key=nav.arrow_levels("chase", t).get) for t in (0, 450, 900, 1350)]
-    assert brightest == ["up", "right", "down", "left"]
-    assert min(min(nav.arrow_levels("chase", t).values()) for t in range(0, 1800, 50)) >= nav.ARROW_DIM
+def test_the_chase_runs_clockwise():
+    step = nav.CHASE_STEP_MS
+    brightest = [max(range(4), key=lambda i: nav.arrow_level("chase", t, i)) for t in (0, step, 2 * step, 3 * step)]
+    assert [nav.ARROW_WAYS[i] for i in brightest] == ["up", "right", "down", "left"]
 
 
-def test_the_blink_is_twice_then_rest():
-    lit = [nav.arrow_levels("blink", t)["up"] == 1.0 for t in (50, 180, 300, 500, 2000)]
-    assert lit == [True, False, True, False, False]
+def test_the_chase_never_goes_dark():
+    assert min(nav.arrow_level("chase", t, i) for t in range(0, 1800, 50) for i in range(4)) >= nav.ARROW_DIM
+
+
+@pytest.mark.parametrize("t, lit", [(50, True), (180, False), (300, True), (500, False), (2000, False), (2530, True)])
+def test_the_blink_is_twice_then_rest(t, lit):
+    assert (nav.arrow_level("blink", t, 0) == 1.0) == lit
 
 
 def test_arrow_pulse_setting():

@@ -85,6 +85,8 @@ class Home:
         ]
         self.left = ctx.settings.get("home_align") == "left"
         self.pulse = ctx.settings.get("arrow_pulse", "chase")
+        if self.pulse not in nav.ARROW_PULSES:
+            self.pulse = "chase"  # a typo shouldn't quietly pick another
         # rare sightings in the right half of the sky: only with the left-aligned layout
         minutes = ctx.settings.get("sighting_minutes", 15) if self.left else 0
         self.sights = sightings.Sightings(ctx, minutes)
@@ -363,6 +365,7 @@ class Home:
     def _arms(self, d, p, now_ms):
         # no app names (presto#11): just the four chevrons, pulsing green <-> black
         # (settings: arrow_pulse). Each sits inside its edge's tap band (nav.EDGE).
-        levels = nav.arrow_levels(self.pulse, now_ms)
-        for way, (x, y) in ARROW_AT.items():
-            self.arrows[way].draw(d, self.arrow_pens[int(levels[way] * 15)], x, y, ARROW_SCALE)
+        for i, way in enumerate(nav.ARROW_WAYS):
+            x, y = ARROW_AT[way]
+            level = nav.arrow_level(self.pulse, now_ms, i)
+            self.arrows[way].draw(d, self.arrow_pens[int(level * 15)], x, y, ARROW_SCALE)
