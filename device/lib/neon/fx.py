@@ -21,6 +21,38 @@ def centered(display, s, y, scale, pen, W=W):
     display.text(s, (W - text_w(display, s, scale)) // 2, y, W, scale)
 
 
+# The vector (Hershey) font, for text between the pixel font's whole steps (8, 16 px).
+# Its capitals run from VECTOR_TOP units above the glyph's origin down to the baseline,
+# VECTOR_CAP units in all (classic Hershey metrics; tune here if the device disagrees).
+VECTOR_CAP, VECTOR_TOP = 21, 12
+
+
+def vector_text(display, s, x, y, px, wrap=W):
+    """s with capitals px tall, their top at y, in the vector font; the pixel font
+    (bitmap8) is set again after."""
+    k = px / VECTOR_CAP
+    display.set_font("sans")
+    display.text(s, x, y + int(VECTOR_TOP * k + 0.5), wrap, k)
+    display.set_font("bitmap8")
+
+
+def vector_width(display, s, px):
+    """vector_text()'s width for s, in px."""
+    display.set_font("sans")
+    w = display.measure_text(s, px / VECTOR_CAP)
+    display.set_font("bitmap8")
+    return w
+
+
+MIN_PX = 6  # the smallest vector text fit_px() shrinks to
+FIT_REF_PX = 10  # fit_px() measures at this size and scales
+
+
+def fit_px(display, s, width, lo, hi):
+    """The capital height (lo..hi px) at which s's vector_text() is width wide."""
+    return max(lo, min(hi, FIT_REF_PX * width // max(1, vector_width(display, s, FIT_REF_PX))))
+
+
 def neon_text(display, pens, s, x, y, scale, core, glow, flicker=1.0):
     """A neon tube: a halo offset around the core. flicker < 1 dims the halo (a stutter)."""
     if flicker > 0.3:
@@ -52,8 +84,16 @@ class GlyphDrops:
         self.top, self.bottom = top, bottom
         g = len(GLYPHS)
         # [x, y, speed, glyph, the glyph before it (the trail's)]
-        self.drops = [[random.randint(0, self.MAX_X), random.randint(top, bottom), random.randint(3, 7),
-                       random.randrange(g), random.randrange(g)] for _ in range(200)]
+        self.drops = [
+            [
+                random.randint(0, self.MAX_X),
+                random.randint(top, bottom),
+                random.randint(3, 7),
+                random.randrange(g),
+                random.randrange(g),
+            ]
+            for _ in range(200)
+        ]
         self.n = n
 
     def step_draw(self, display, pens):
@@ -81,7 +121,8 @@ class GlyphRain:
         self.top, self.bottom = top, bottom
         self.cw = W // cols
         self.cols = [
-            [random.randint(top - 200, bottom), random.randint(*speed), random.randint(*length), True] for _ in range(cols)
+            [random.randint(top - 200, bottom), random.randint(*speed), random.randint(*length), True]
+            for _ in range(cols)
         ]
 
     def set_health(self, i, ok):
@@ -105,8 +146,9 @@ class GlyphRain:
                     display.set_pen(pens.phosphor if k < 4 else pens.phosphor_dim)
                 else:
                     display.set_pen(pens.red if k < 3 else pens.line)
-                display.character(ord(random.choice(GLYPHS)) if k < 2 else ord(GLYPHS[(i * 7 + k) % len(GLYPHS)]),
-                                  x, y, self.scale)
+                display.character(
+                    ord(random.choice(GLYPHS)) if k < 2 else ord(GLYPHS[(i * 7 + k) % len(GLYPHS)]), x, y, self.scale
+                )
 
 
 def scanlines(display, pen, top=0, bottom=W, every=2):
@@ -135,38 +177,3 @@ def draw_static(display, pens, cover):
     for _ in range(random.randint(0, 2)):  # a tear: the picture losing its hold
         display.set_pen(pens.text if random.random() < 0.5 else pens.dim)
         display.rectangle(0, random.randint(0, W - 1), W, 1)
-
-
-def home_tab(display, pens, edge, now_ms, rise=1.0):
-    """The HOME button, raised by a tap on the edge facing Home (tap again to go
-    back). It sits in that edge's tap band (nav.EDGE), rising out of the edge
-    (rise 0 -> 1, eased) and pulsing gently once up."""
-    pulse = (now_ms // 600) % 2
-    ring = pens.cyan if pulse else pens.cyan_glow
-    e = 1 - (1 - rise) * (1 - rise)  # ease out
-    if edge in ("up", "down"):
-        w, h = 80, 20
-        x = (W - w) // 2
-        hidden = int((h + 4) * (1 - e))
-        y = 4 - hidden if edge == "up" else W - 4 - h + hidden
-        label = "^ HOME" if edge == "up" else "v HOME"
-    else:
-        w, h = 22, 90
-        hidden = int((w + 3) * (1 - e))
-        x = 3 - hidden if edge == "left" else W - 3 - w + hidden
-        y = (W - h) // 2
-        label = None
-    display.set_pen(pens.night)
-    display.rectangle(x, y, w, h)
-    display.set_pen(ring)
-    display.rectangle(x, y, w, 1)
-    display.rectangle(x, y + h - 1, w, 1)
-    display.rectangle(x, y, 1, h)
-    display.rectangle(x + w - 1, y, 1, h)
-    display.set_pen(pens.text)
-    if label:
-        display.text(label, x + (w - display.measure_text(label, 2)) // 2, y + 3, W, 2)
-    else:  # vertical: an arrow, then H O M E down the tab
-        display.text("<" if edge == "left" else ">", x + 5, y + 4, W, 2)
-        for i, ch in enumerate("HOME"):
-            display.character(ord(ch), x + 5, y + 22 + i * 16, 2)

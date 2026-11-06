@@ -10,7 +10,11 @@ deadlocks the firmware (2026-11-05), so this module never writes the flash.
 Once the app has run CONFIRM_MS on new code it writes /sd/ota/confirmed; if it
 doesn't, ota_boot rolls the update back. main.py and ota_boot.py never come this way.
 
-Reader, read() and plan() are pure (tested on the laptop); Updater does the I/O.
+While it downloads and restarts, the back LEDs put on a show (leds(): a rainbow
+filling up with the download, then a fast sparkling spin until the reset), through
+the app's show(frac) callback: frac 0..1 downloading, None restarting.
+
+Reader, read(), plan() and leds() are pure (tested on the laptop); Updater does the I/O.
 """
 
 import binascii
@@ -20,6 +24,7 @@ import time
 import ota_boot
 
 CONFIRM_MS = 60000
+N_LEDS = 7
 QUIET_MS = 15000  # no TLS connect within this long of a touch (it stalls the screen)
 
 
@@ -94,7 +99,7 @@ def read(stream, manifest, wanted, write):
     r = Reader(stream)
     head = r.line()
     if head != "neon-bundle %s" % manifest["version"]:
-        raise ValueError("bundle is %r, manifest says %s" % (head, manifest["version"]))
+        raise ValueError("bundle is {!r}, manifest says {}".format(head, manifest["version"]))
     expect = {f["path"]: f for f in manifest["files"]}
     seen = set()
     while len(seen) < len(expect):
@@ -120,8 +125,10 @@ def read(stream, manifest, wanted, write):
 
 
 class Updater:
-    def __init__(self, url, every_s=600, root=""):
+    def __init__(self, url, every_s=600, root="", show=None):
         self.url = (url or "").rstrip("/")
+        self.show = show or (lambda frac: None)  # the LED show: frac 0..1, None while restarting
+        self.got, self.size = 0, 1
         self.every_s = every_s
         self.root = root
         self.state = ota_boot.read(root) or {}
@@ -188,6 +195,8 @@ class Updater:
             self.version = v
             return False
         ota_boot.remove_tree(self.root + ota_boot.NEW)
+        self.got, self.size = 0, max(1, sum(f["size"] for f in manifest["files"] if f["path"] in changed))
+        self.show(0.0)
         r = self._get("/bundle")
         try:
             read(r.raw, manifest, set(changed), self._stage)
@@ -195,7 +204,7 @@ class Updater:
             r.close()
         ota_boot.write_json(self.root + ota_boot.PENDING, pending)
         print("[neon] ota: %s downloaded, restarting to install it" % v)
-        restart()
+        restart(self.show)
         return True
 
     def _stage(self, path, pieces):
@@ -204,16 +213,52 @@ class Updater:
         with open(dst, "wb") as f:
             for piece in pieces:
                 f.write(piece)
+                self.got += len(piece)
+                self.show(min(1.0, self.got / self.size))
 
 
-def restart():
-    """Leave Wi-Fi cleanly first (presto#18), then reset."""
+def restart(show=None):
+    """Leave Wi-Fi cleanly first (presto#18), then reset; show(None) keeps the LEDs
+    going meanwhile."""
     import machine
     import network
 
     w = network.WLAN(network.STA_IF)
     w.disconnect()
-    time.sleep(2)
+    _wait(2000, show)
     w.active(False)
-    time.sleep(1)
+    _wait(1000, show)
     machine.reset()
+
+
+def _wait(ms, show):
+    end = time.ticks_add(time.ticks_ms(), ms)
+    while time.ticks_diff(end, time.ticks_ms()) > 0:
+        if show:
+            show(None)
+        time.sleep_ms(30)
+
+
+def _hsv(h, v):
+    """A fully saturated hue h (0..1) at value v (0..1) -> (r, g, b) 0..255."""
+    h = (h % 1.0) * 6
+    i, f = int(h), h - int(h)
+    q, t = 1 - f, f
+    r, g, b = ((1, t, 0), (q, 1, 0), (0, 1, t), (0, q, 1), (t, 0, 1), (1, 0, q))[i % 6]
+    return (int(r * v * 255), int(g * v * 255), int(b * v * 255))
+
+
+def leds(frac, t):
+    """The update's LED show, N_LEDS colours at t ms. Downloading (frac 0..1): a rainbow
+    spins round them, the LEDs the download has reached at full brightness, the rest
+    faint. Restarting (frac None): all of them, spinning fast, with white sparks."""
+    out = []
+    for i in range(N_LEDS):
+        if frac is None:
+            hue = i / N_LEDS - t / 400
+            spark = (t // 60 + i * 3) % 11 == 0
+            out.append((255, 255, 255) if spark else _hsv(hue, 1.0))
+        else:
+            hue = i / N_LEDS - t / 1200
+            out.append(_hsv(hue, 1.0 if i < 1 + frac * (N_LEDS - 1) else 0.15))
+    return out

@@ -206,6 +206,58 @@ def test_the_blink_is_twice_then_rest(t, lit):
     assert (nav.arrow_level("blink", t, 0) == 1.0) == lit
 
 
+def test_vector_text_sizes_its_capitals_and_restores_the_pixel_font():
+    from neon import fx
+
+    calls = []
+
+    class Display:
+        def set_font(self, name):
+            calls.append(("font", name))
+
+        def text(self, s, x, y, wrap, scale):
+            calls.append(("text", s, x, y, wrap, scale))
+
+    fx.vector_text(Display(), "THU NOV 6", 14, 71, 10)
+    font, (_, s, x, y, wrap, k), restore = calls
+    assert font == ("font", "sans") and restore == ("font", "bitmap8")
+    assert abs(k * fx.VECTOR_CAP - 10) < 1e-9  # capitals 10 px: 1.25x the pixel font's 8
+    assert y == 71 + round(fx.VECTOR_TOP * k)  # the origin sits below the capitals' top
+
+
+def test_vector_width_measures_in_the_vector_font_and_restores_the_pixel_font():
+    from neon import fx
+
+    fonts = []
+
+    class Display:
+        def set_font(self, name):
+            fonts.append(name)
+
+        def measure_text(self, s, scale):
+            assert fonts[-1] == "sans"
+            return int(len(s) * 20 * scale)
+
+    assert fx.vector_width(Display(), "52F CLOUDY", 10) == int(10 * 20 * 10 / fx.VECTOR_CAP)
+    assert fonts == ["sans", "bitmap8"]
+
+
+def test_fit_px_sizes_text_to_a_width_within_its_bounds():
+    from neon import fx
+
+    class Display:  # 2 px of width per character per px of capital height
+        def set_font(self, name):
+            pass
+
+        def measure_text(self, s, scale):
+            return int(len(s) * 2 * scale * fx.VECTOR_CAP)
+
+    d = Display()
+    assert fx.fit_px(d, "ABCDE", 100, 6, 18) == 10  # 5 chars x 2 x 10 px = 100
+    assert fx.fit_px(d, "AB", 100, 6, 18) == 18  # would be 25: held at the top
+    assert fx.fit_px(d, "A" * 50, 100, 6, 18) == 6  # would be 1: held at the bottom
+
+
 def test_arrow_pulse_setting():
     assert conf.load("device/settings.yaml", {})["arrow_pulse"] == "faint"
 
@@ -218,37 +270,23 @@ def test_taps_open_apps_and_come_home():
     assert p.tap(5, 120, 0) == "photos"
     assert p.home_tab() == "right"
     assert p.tap(50, 120, 100) is None and p.current == "photos"  # a photo tap, not navigation
-    assert p.tap(5, 120, 200) is None  # the far edge is not the HOME button's
-    assert not p.revealed(300)
+    assert p.tap(5, 120, 200) is None  # the far edge is not the way Home
 
 
-def test_hidden_home_button():
+def test_one_tap_on_the_edge_facing_home_goes_home():
     p = nav.Plus(ARMS)
-    p.tap(120, 5, 0)  # Weather; its HOME button hides on the bottom edge
+    p.tap(120, 5, 0)  # Weather; its arrow is on the bottom edge
     assert p.current == "weather" and p.home_tab() == "down"
-    assert p.tap(120, 235, 1000) == nav.REVEAL and p.current == "weather"  # first tap raises it
-    assert p.revealed(1500) and p.reveal_age(1500) == 500
-    assert p.tap(120, 235, 2000) == nav.HOME  # second tap, while it's up: Home
-    assert not p.revealed(2001)
-
-
-def test_home_button_hides_again():
-    p = nav.Plus(ARMS)
-    p.tap(235, 120, 0)  # Brick
-    assert p.tap(5, 120, 1000) == nav.REVEAL
-    later = 1000 + nav.REVEAL_MS
-    assert not p.revealed(later)
-    assert p.tap(5, 120, later) == nav.REVEAL and p.current == "brick"  # raised again, not Home
+    assert p.tap(120, 235, 1000) == nav.HOME and p.current == nav.HOME  # one tap
+    p.tap(235, 120, 0)  # Brick: the arrow on the left
+    assert p.tap(120, 235, 10) is None and p.current == "brick"  # the other edges are Brick's
+    assert p.tap(5, 120, 20) == nav.HOME
 
 
 def test_ticks_diff_wraps():
     top = (1 << 30) - 100
     assert nav.ticks_diff(50, top) == 150
     assert nav.ticks_diff(top, 50) == -150
-    p = nav.Plus(ARMS)
-    p.tap(235, 120, 0)
-    assert p.tap(5, 120, top) == nav.REVEAL
-    assert p.revealed(50)  # 150 ms later, across the wrap
 
 
 # --- photosync -----------------------------------------------------------
@@ -441,7 +479,7 @@ def test_brick_feed_setting():
 
 def test_leds_follow_the_lamp_by_default():
     s = conf.load("device/settings.yaml", {})
-    assert s["leds_light"] == "light.lamp" and s["leds_floor"] == 0.6
+    assert s["leds_light"] == "light.lamp" and s["leds_floor"] == 1.0
     assert "plasma_url" not in s
 
 

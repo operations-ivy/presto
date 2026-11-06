@@ -36,9 +36,18 @@ def make_device(tmp_path, files):
 
 # --- the server -------------------------------------------------------------
 def test_release_skips_the_boot_files_and_caches(tmp_path):
-    rel = make_device(tmp_path, {"main.py": "boot", "ota_boot.py": "guard", "settings.yaml": "a: 1",
-                                 "secrets.py": "WIFI_PASSWORD = 'x'", "lib/secrets.py": "no",
-                                 "lib/neon/app.py": "x = 1", "lib/neon/__pycache__/app.mpy": "junk"})
+    rel = make_device(
+        tmp_path,
+        {
+            "main.py": "boot",
+            "ota_boot.py": "guard",
+            "settings.yaml": "a: 1",
+            "secrets.py": "WIFI_PASSWORD = 'x'",
+            "lib/secrets.py": "no",
+            "lib/neon/app.py": "x = 1",
+            "lib/neon/__pycache__/app.mpy": "junk",
+        },
+    )
     assert [p for p, _ in rel.files] == ["lib/neon/app.py", "settings.yaml"]
 
 
@@ -121,8 +130,33 @@ def updater_for(root, rel, monkeypatch):
 
     monkeypatch.setattr(up, "_get", lambda path: Resp(responses[path]))
     restarts = []
-    monkeypatch.setattr(ota, "restart", lambda: restarts.append(1))
+    monkeypatch.setattr(ota, "restart", lambda show=None: restarts.append(1))
     return up, restarts
+
+
+def test_the_download_shows_its_progress_on_the_leds(tmp_path, monkeypatch):
+    root = flash_with(tmp_path, {"lib/neon/app.py": "old app"}, {"version": "v1", "status": "ok"})
+    rel = make_device(tmp_path, {"lib/neon/app.py": "new app " * 2000, "lib/neon/new.py": "added"})
+    up, restarts = updater_for(root, rel, monkeypatch)
+    shown = []
+    up.show = shown.append
+    assert up.check() is True and restarts == [1]
+    assert shown[0] == 0.0 and shown[-1] == 1.0 and len(shown) > 2
+    assert shown == sorted(shown)  # it only fills up
+
+
+@pytest.mark.parametrize("frac", [0.0, 0.5, 1.0, None])
+@pytest.mark.parametrize("t", [0, 77, 1000, 99999])
+def test_the_update_show_is_seven_bright_colours(frac, t):
+    out = ota.leds(frac, t)
+    assert len(out) == ota.N_LEDS
+    assert all(0 <= c <= 255 for rgb in out for c in rgb)
+    assert max(max(rgb) for rgb in out) == 255  # bright: they face the wall
+
+
+def test_the_download_fills_the_ring():
+    lit = lambda frac: sum(max(rgb) == 255 for rgb in ota.leds(frac, 0))  # noqa: E731
+    assert lit(0.0) == 1 and lit(0.5) == 4 and lit(1.0) == ota.N_LEDS
 
 
 def test_the_app_only_writes_the_sd_card_and_boot_installs(tmp_path, monkeypatch):

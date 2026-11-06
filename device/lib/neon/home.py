@@ -1,6 +1,5 @@
 """Home: a Blade Runner night. Skyline, rain, a neon-sign clock, the forecast, and the four arms."""
 
-import math
 import random
 import time
 
@@ -9,6 +8,10 @@ from neon import fx, nav, sightings, sprites, theme, tz, wx
 W = H = 240  # the Presto at its native speed: 240x240, doubled to the 480 panel
 SKY_BOTTOM = 165
 GROUND = 226
+DATE_MAX_PX = 18  # the date grows to the clock's width, up to this
+ICON_GAP = 6  # between the forecast's label and the icon under it
+RAINBOW_MS = 20000  # Home's LEDs: the rainbow's drift, ms per unit of hue
+SMALL_PX = 10  # left-aligned Home's date and forecast: capitals 10 px, 1.25x the pixel font's 8
 LEFT = 14  # home_align: left: the text's margin, clear of the left arrow (y 137+)
 SUMMON_X, SUMMON_Y = 130, 150  # left layout: a tap right of this and above that summons a sighting
 ARROW_SCALE = 1
@@ -84,6 +87,7 @@ class Home:
             for t in range(16)
         ]
         self.left = ctx.settings.get("home_align") == "left"
+        self.box_w, self.box_bottom = None, 88  # the left layout's box (_box_w), and the date's bottom
         self.pulse = ctx.settings.get("arrow_pulse", "faint")
         if self.pulse not in nav.ARROW_PULSES:
             self.pulse = "faint"  # a typo shouldn't quietly pick another
@@ -187,10 +191,10 @@ class Home:
 
     # --- leds ---
     def leds(self, presto, t):
-        v = 0.08 + 0.07 * (1 + math.sin(t / 900)) / 2
         for i in range(7):
-            # amber at the ends, magenta in the middle, breathing
-            presto.set_led_hsv(i, 0.95 if 2 <= i <= 4 else 0.09, 1.0, v)
+            # a slow rainbow drifting round them, ~20 s a turn, at full brightness: they face
+            # the wall and anything less barely shows (the user, 2026-11-06)
+            presto.set_led_hsv(i, (i / 7 + t / RAINBOW_MS) % 1.0, 1.0, 1.0)
 
     # --- drawing ---
     def draw(self, d, now_ms):
@@ -299,9 +303,9 @@ class Home:
         else:
             s, date = "--:--", "SYNCING TIME" if ctx.net.up else "NO SIGNAL"
         left = self.left
-        # centered: 48 px tall, clear of the top arrow and the forecast; left: 32 px, leaving
-        # the right half of the sky to the sightings
-        scale = 4 if left else 6
+        # centered: 48 px tall, clear of the top arrow and the forecast; left: 40 px (it was
+        # 32: the user, 2026-11-06), leaving the right half of the sky to the sightings
+        scale = 5 if left else 6
         x = LEFT if left else (W - d.measure_text(s, scale) - (26 if ampm else 0)) // 2
         y = 26
         if ampm:
@@ -320,8 +324,14 @@ class Home:
         else:
             fx.neon_text(d, p, s, x, y, scale, p.cyan, p.cyan_glow, flicker)
         if left:
+            # one box (the user, 2026-11-06): the date spans the clock's width, the
+            # forecast sits under it, its icon on the box's right edge
+            box_w = self._box_w(d, scale)
+            px = fx.fit_px(d, date, box_w, SMALL_PX, DATE_MAX_PX)  # grows to span the box
             d.set_pen(p.amber)
-            d.text(date, LEFT, y + 8 * scale + 5, W, 1)  # 63..71
+            date_y = y + 8 * scale + 5
+            fx.vector_text(d, date, LEFT, date_y, px)
+            self.box_bottom = date_y + px
         else:
             fx.centered(d, date, y + 8 * scale + 6, 2, p.amber)  # 80..96, above the forecast at 102
 
@@ -329,38 +339,55 @@ class Home:
         ctx = self.ctx
         s = ctx.weather.summary
         kind = ctx.weather.kind
-        left = self.left
-        y = 78 if left else 102
-        # the icon: animated, two frames
-        alt = (self.frame // 5) % 2
-        ix = LEFT if left else 44
+        if self.left:
+            # under the date, at the box's margin, in SMALL_PX vector text (each line shrinks
+            # to fit the box if it's wider); the icon on a line of its own under the label
+            # (the user, 2026-11-06)
+            y, label_y, wrap = self.box_bottom + 8, 14, self._box_w(d, 5)
+            tx, ix, iy = LEFT, LEFT, y + label_y + SMALL_PX + ICON_GAP
+        else:  # the icon, then the pixel font, the forecast at 2x
+            y, label_y, wrap = 102, 19, 158
+            tx, ix, iy = 82, 44, y
+        if not ctx.weather.configured:
+            lines = [("SET LATITUDE/", 1, p.text), ("LONGITUDE", label_y, p.text)]
+        else:
+            lines = [(wx.line(s, ""), 1, p.text), (wx.LABELS.get(kind, "NO DATA"), label_y, p.dim)]
+        self._weather_icon(d, p, kind, ix, iy)
+        for n, (text, dy, pen) in enumerate(lines):
+            d.set_pen(pen)
+            if self.left:
+                fx.vector_text(d, text, tx, y + dy, fx.fit_px(d, text, wrap, fx.MIN_PX, SMALL_PX), W)
+            else:
+                d.text(text, tx, y + dy, wrap, 2 if n == 0 and ctx.weather.configured else 1)
+
+    def _box_w(self, d, scale):
+        """The left layout's box: the clock's widest width, so it doesn't change with the time."""
+        if self.box_w is None:
+            self.box_w = d.measure_text("12:00", scale)
+            if not self.ctx.settings["clock_24h"]:
+                self.box_w += 4 + d.measure_text("PM", 2)
+        return self.box_w
+
+    def edge_arrow(self, d, way, now_ms):
+        """One of Home's arrows, for an app: on the edge facing Home, pointing to it."""
+        x, y = ARROW_AT[way]
+        level = nav.arrow_level(self.pulse, now_ms, nav.ARROW_WAYS.index(way))
+        self.arrows[way].draw(d, self.arrow_pens[int(level * 15)], x, y, ARROW_SCALE)
+
+    def _weather_icon(self, d, p, kind, ix, y):
+        alt = (self.frame // 5) % 2  # animated, two frames
         if kind in ("clear", "partly"):
             self.icons["sun" if self.day else "moon"].draw(d, p.letters, ix, y, 2)
-        else:
-            self.icons["cloud"].draw(d, p.letters, ix, y, 2)
-            if kind in ("rain", "storm"):
-                self.icons["rain_b" if alt else "rain_a"].draw(d, p.letters, ix, y + 17, 2)
-            if kind == "storm" and alt:
-                self.icons["bolt"].draw(d, p.letters, ix, y + 12, 2)
-            if kind == "snow":
-                self.icons["snow_b" if alt else "snow_a"].draw(d, p.letters, ix, y + 17, 2)
-            if kind == "fog":
-                self.icons["fog"].draw(d, p.letters, ix, y + 13, 2)
-        tx = ix + 34 if left else ix + 38
-        # the forecast's scale, then each line's y; left: the small font, in ~100 px
-        scale, label_y, room_y, wrap = (1, 11, 21, 100) if left else (2, 19, 30, 158)
-        d.set_pen(p.text)
-        if not ctx.weather.configured:
-            d.text("SET LATITUDE/", tx, y + 1, wrap, 1)
-            d.text("LONGITUDE", tx, y + 10, wrap, 1)
-        else:
-            d.text(wx.line(s, ""), tx, y + 1, wrap, scale)
-            d.set_pen(p.dim)
-            d.text(wx.LABELS.get(kind, "NO DATA"), tx, y + label_y, wrap, 1)
-        room = ctx.room
-        if room.temp is not None:
-            d.set_pen(p.sodium)
-            d.text("IN %.1f  %d%%RH" % (room.temp, round(room.humidity or 0)), tx, y + room_y, wrap, 1)
+            return
+        self.icons["cloud"].draw(d, p.letters, ix, y, 2)
+        if kind in ("rain", "storm"):
+            self.icons["rain_b" if alt else "rain_a"].draw(d, p.letters, ix, y + 17, 2)
+        if kind == "storm" and alt:
+            self.icons["bolt"].draw(d, p.letters, ix, y + 12, 2)
+        if kind == "snow":
+            self.icons["snow_b" if alt else "snow_a"].draw(d, p.letters, ix, y + 17, 2)
+        if kind == "fog":
+            self.icons["fog"].draw(d, p.letters, ix, y + 13, 2)
 
     def _arms(self, d, p, now_ms):
         # no app names (presto#11): just the four chevrons, pulsing green <-> black

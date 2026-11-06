@@ -20,8 +20,8 @@ Navigation is by taps (swipes do nothing): each edge has a 64 px tap band.
 
 | Touch | Does |
 | --- | --- |
-| On Home, tap an app's name (at the edge, by its pulsing green arrow) | opens that app |
-| In an app, tap the edge facing Home | the hidden HOME button rises; tap it again within 4 s for Home |
+| On Home, tap an edge (by its small green arrow) | opens that arm's app |
+| In an app, tap the edge facing Home (its small arrow) | goes Home |
 | Two-finger tap | Home, from anywhere |
 | Any other tap | the app's own action (Photos: right half next, left half previous; Home: glitch) |
 | No touch for `idle_seconds` | the `idle_screen` (Photos) |
@@ -31,8 +31,8 @@ chimes with a bell envelope at `chirp_volume`.
 
 - **Home**: a rainy city at night. Skyline with flickering windows, a neon
   BRICK sign, a flying car now and then, a neon-tube clock (12- or 24-hour)
-  that glitches every 20-30 s, the date, the forecast with an animated icon,
-  and the room's temperature. The scene follows the forecast: rain when it
+  that glitches every 20-30 s, the date and the forecast with an animated
+  icon (the room's readings are on Weather). The scene follows the forecast: rain when it
   rains, stars on a clear night, 2049 dust on a hot day.
 - **Weather** (up): outside temperature in a haze that's warm or cold, and the
   room's sensors on a flickering hologram panel.
@@ -53,10 +53,10 @@ chimes with a bell envelope at `chirp_volume`.
   tear lines, and the new one tunes in as the static thins out. The backlight
   follows the light sensor.
 - **Back LEDs**: they follow the Hue lamp (`leds_light`), its colour at full
-  saturation and never below `leds_floor` (0.6) of full brightness, since they
-  face the wall; dark when it's off, whatever the room. While Home Assistant
-  can't be reached (or there's no `HA_TOKEN`) they change with the screen and go
-  off in a dark room.
+  saturation and at full brightness (`leds_floor` 1.0, whatever the lamp's level), since they
+  face the wall; dark when it's off. While Home Assistant can't be reached (or
+  there's no `HA_TOKEN`) they change with the screen, at full brightness. A dark
+  room only dims the backlight: the LEDs stay on, where they show best.
 
 Style: overwatch's palette (night violet, neon magenta, cyan, amber) plus
 Blade Runner's sodium amber, 2049's dust orange and the Matrix's phosphor
