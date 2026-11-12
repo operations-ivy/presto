@@ -34,8 +34,13 @@ chimes with a bell envelope at `chirp_volume`.
   that glitches every 20-30 s, the date and the forecast with an animated
   icon (the room's readings are on Weather). The scene follows the forecast: rain when it
   rains, stars on a clear night, 2049 dust on a hot day.
-- **Weather** (up): outside temperature in a haze that's warm or cold, and the
-  room's sensors on a flickering hologram panel.
+- **Weather** (up): the weather at a glance. The conditions fill the screen (rain
+  streaks, drifting snow, fog banks, storms with lightning, clouds on the wind, the
+  sun's turning rays by day or the moon and stars at night) under Home's sky, with
+  the temperature outside, a forecast panel (high, low, chance of rain) and every
+  room on a flickering hologram panel: each indoor sensor Home Assistant has online
+  (presto-feed's, as on Brick's ROOMS) plus the Presto's own. An offline sensor
+  isn't listed; more than four turn in pages.
 - **Photos** (left): full-resolution JPEGs from `/sd/gallery`.
 - **Brick** (right): a Matrix terminal. The cluster feed isn't built yet, so
   for now it shows the Presto itself. Passive only: it never beeps or takes
@@ -52,6 +57,10 @@ chimes with a bell envelope at `chirp_volume`.
 - **Transitions**: TV static. The old screen breaks up into noise bars and
   tear lines, and the new one tunes in as the static thins out. The backlight
   follows the light sensor.
+- **Room sensor on the LAN** (presto#8): `http://presto:8767/room.json` for Home
+  Assistant (`up`, `temperature_f`, `humidity`, `pressure_hpa`, `lux`; nulls and
+  `up: false` once the last reading is 5 minutes old) and `/metrics` for Prometheus
+  (`presto_room_*`). Served between frames without blocking; `room_port: 0` turns it off.
 - **Back LEDs**: they follow the Hue lamp (`leds_light`), its colour at full
   saturation and at full brightness (`leds_floor` 1.0, whatever the lamp's level), since they
   face the wall; dark when it's off. While Home Assistant can't be reached (or
@@ -69,6 +78,8 @@ art in `device/lib/neon/sprites.py`, like brick-status's `tools/pixel_art.py`).
 | --- | --- |
 | `device/main.py` | runs on boot: sets the hostname, `Presto(full_res=True)`, the app |
 | `device/lib/neon/` | the app. `app.py` loop, `home.py`, `screens.py`; pure modules (`nav`, `tz`, `conf`, `wx`, `sprites`) are tested on CPython |
+| `device/lib/neon/roomhttp.py` | `/room.json` and `/metrics` on port 8767 (presto#8) |
+| `device/lib/neon/weatherfx.py` | the Weather screen's animated sky (presto#23) |
 | `device/settings.yaml` | settings (flat `key: value`; read by `neon/conf.py`) |
 | `tools/deploy` | copy `device/` to the Presto over USB and restart it |
 | `tools/presto-photos` | iPhone HEIC/JPEG to 480x480 baseline sRGB JPEGs (the pipeline's first draft) |

@@ -170,6 +170,9 @@ class Room:
         except Exception as e:
             log("ltr559:", repr(e))
         self.temp = self.humidity = self.pressure = self.lux = self.prox = None
+        self.temp_f = None  # always Fahrenheit, for /room.json and /metrics (roomhttp.py)
+        self.read_at = None  # ticks_ms of the last good BME280 read
+        self.reads = {"ok": 0, "error": 0}
         self._last = None  # never read yet (not a fake old tick: ticks wrap, README)
 
     def read(self, every_ms=3000):
@@ -181,9 +184,13 @@ class Room:
             try:
                 c, p, rh = self.bme.read()
                 c += self.temp_offset
-                self.temp = c * 9 / 5 + 32 if self.fahrenheit else c
+                self.temp_f = c * 9 / 5 + 32
+                self.temp = self.temp_f if self.fahrenheit else c
                 self.humidity, self.pressure = rh, p / 100
+                self.read_at = now
+                self.reads["ok"] += 1
             except Exception as e:
+                self.reads["error"] += 1
                 log("bme read:", repr(e))
         self.read_light()
 

@@ -28,3 +28,4 @@ ha_url: http://brick2000:8123  # Home Assistant, plain HTTP on the LAN; the toke
 lights: light.lamp     # the light app's lights, comma-separated
 leds_light: light.lamp # the back LEDs follow this light, off with it; empty: the screen's own
 leds_floor: 1.0        # their brightness at the light's lowest: full, they face the wall
+room_port: 8767        # /room.json (Home Assistant) and /metrics (Prometheus) on the LAN; 0: off

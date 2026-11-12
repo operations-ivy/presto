@@ -39,12 +39,58 @@ class Screen:
         raise NotImplementedError
 
 
+def _feed_tick(screen, now_ms):
+    """presto-feed's fetch for Brick and Weather (ctx.uplink, shared), between frames. It stalls
+    ~3 s (TLS), so the screen first shows RECEIVING for a frame. True after a good fetch."""
+    up = screen.ctx.uplink
+    if not (up.due(now_ms) and screen.ctx.net.up):
+        return False
+    if not screen.receiving:
+        screen.receiving = True  # draw RECEIVING first, fetch on the next pass
+        return False
+    try:
+        return up.fetch(now_ms)
+    finally:
+        screen.receiving = False
+
+
 class Weather(Screen):
-    """2049 haze: warm orange when it's hot, cold teal when it's wet; the room as holograms."""
+    """The weather at a glance (presto#23): the conditions across the screen (weatherfx), the
+    temperature outside, a forecast panel (high, low, chance of rain) and every room online as
+    holograms. The sky follows Home's rules: 2049 haze or grey by day (home_sky: daylight),
+    violet at night."""
 
     name = "weather"
-    frame_ms = 160
+    frame_ms = 100  # ~10 fps: the rain and snow move
     led_hue = 0.88
+    ROOMS_Y, ROOMS_H, PITCH = 138, 88, 17  # the rooms panel; 4 rows, then pages
+
+    def __init__(self, ctx):
+        super().__init__(ctx)
+        from neon import weatherfx
+
+        self.fx = weatherfx
+        self.sky = weatherfx.Sky(ctx.pens)
+        self.receiving = False
+        p, night = ctx.pens, theme.PALETTE["night"]
+        dust_dark, dust = theme.PALETTE["dust_dark"], theme.PALETTE["dust"]
+        grey_top, grey_low = (44, 44, 52), (104, 102, 110)
+        self.skies = {  # 10 bands each, top to bottom: Home's skies (home.py), on the whole screen
+            "haze": [p.rgb(*theme.mix(dust_dark, dust, i / 9)) for i in range(10)],
+            "grey_haze": [p.rgb(*theme.mix(grey_top, dust, (i / 9) ** 1.6)) for i in range(10)],
+            "overcast": [p.rgb(*theme.mix(grey_top, grey_low, i / 9)) for i in range(10)],
+            "night": [p.rgb(*theme.mix(night, (30, 14, 52), i / 9)) for i in range(10)],
+        }
+        self.daylight = ctx.settings.get("home_sky") == "daylight"
+        self.panel_pen = p.rgb(8, 14, 30)
+        self.scan_pen = p.rgb(20, 40, 70)
+
+    def enter(self):
+        super().enter()
+        self.ctx.uplink.entered(time.ticks_ms())
+
+    def tick(self, now_ms):
+        _feed_tick(self, now_ms)
 
     def leds(self, presto, t):
         for i in range(7):  # hologram shimmer: pink and blue chasing
@@ -53,54 +99,101 @@ class Weather(Screen):
     def draw(self, d, now_ms):
         ctx, p = self.ctx, self.ctx.pens
         s = ctx.weather.summary
-        warm = s is not None and (s.get("now") or 0) >= (68 if ctx.fahrenheit else 20)
-        top = theme.PALETTE["dust"] if warm else (6, 70, 90)
-        for i in range(10):
-            d.set_pen(p.rgb(*theme.mix(theme.PALETTE["night"], top, (9 - i) / 14)))
+        kind = ctx.weather.kind
+        minute = None
+        if ctx.clock.valid:
+            lt = ctx.clock.now()
+            minute = lt[3] * 60 + lt[4]
+        day = wx.daytime(s, minute)
+        bands = self.skies[wx.sky(kind, day and self.daylight)]
+        for i, pen in enumerate(bands):
+            d.set_pen(pen)
             d.rectangle(0, i * 24, W, 24)
-        fx.centered(d, "OUTSIDE", 12, 2, p.text)
-        if s and s.get("now") is not None:
-            t = "%d" % round(s["now"])
-            sc = 7
-            x = (W - d.measure_text(t, sc)) // 2
-            fx.neon_text(d, p, t, x, 32, sc, p.text, p.rgb(120, 50, 20) if warm else p.rgb(10, 60, 80))
-            fx.centered(d, wx.line(s, "") + "   " + wx.LABELS.get(s["kind"], ""), 95, 1, p.text)
-        else:
-            fx.centered(d, "NO FORECAST" if ctx.weather.configured else "SET LATITUDE/LONGITUDE", 55, 2, p.dim)
-            fx.centered(d, "in secrets.py on the Presto", 75, 1, p.faint)
-        self._holo(d, p, now_ms)
+        self.sky.draw(d, kind, day, bands[1], now_ms)  # the sun and moon follow the real day, as on Home
+        self._outside(d, p, s, kind)
+        self._forecast(d, p, s)
+        self._rooms(d, p, now_ms)
 
-    def _holo(self, d, p, now_ms):
-        room = self.ctx.room
-        x0, y0, w, h = 15, 120, 210, 100
-        flick = random.random() < 0.06
-        edge = p.cyan if not flick else p.magenta
-        d.set_pen(p.rgb(8, 14, 30))
+    def _outside(self, d, p, s, kind):
+        fx.centered(d, "OUTSIDE", 8, 1, p.dim)
+        if s and s.get("now") is not None:
+            warm = s["now"] >= (68 if self.ctx.fahrenheit else 20)
+            t = "%d" % round(s["now"])
+            x = (W - d.measure_text(t, 6)) // 2
+            fx.neon_text(d, p, t, x, 20, 6, p.text, p.rgb(120, 50, 20) if warm else p.rgb(10, 60, 80))
+            d.set_pen(p.dim)
+            d.text("F" if self.ctx.fahrenheit else "C", x + d.measure_text(t, 6) + 3, 22, 20, 2)
+            fx.centered(d, wx.LABELS.get(kind, ""), 74, 2, p.text)
+        else:
+            fx.centered(d, "NO FORECAST" if self.ctx.weather.configured else "SET LATITUDE/LONGITUDE", 40, 2, p.dim)
+            fx.centered(d, "in secrets.py on the Presto", 60, 1, p.faint)
+
+    def _panel(self, d, p, x0, y0, w, h, edge):
+        d.set_pen(self.panel_pen)
         d.rectangle(x0, y0, w, h)
         d.set_pen(edge)
         for a, b, c, e in ((x0, y0, w, 1), (x0, y0 + h - 1, w, 1), (x0, y0, 1, h), (x0 + w - 1, y0, 1, h)):
             d.rectangle(a, b, c, e)
-        d.set_pen(p.rgb(20, 40, 70))
+
+    def _forecast(self, d, p, s):
+        """Today like a forecast panel: HIGH, LOW and RAIN in three cells."""
+        x0, y0, w, h = 12, 96, 216, 36
+        self._panel(d, p, x0, y0, w, h, p.line)
+        have = s is not None and s.get("hi") is not None
+        cells = (
+            ("HIGH", "%d" % round(s["hi"]) if have else "--", p.sodium),
+            ("LOW", "%d" % round(s["lo"]) if have and s.get("lo") is not None else "--", p.cyan),
+            ("RAIN", "%d%%" % s["rain_pct"] if have and s.get("rain_pct") is not None else "--", p.text),
+        )
+        cw = w // 3
+        for i, (label, value, pen) in enumerate(cells):
+            cx = x0 + i * cw
+            if i:
+                d.set_pen(p.line)
+                d.rectangle(cx, y0 + 5, 1, h - 10)
+            d.set_pen(p.faint)
+            d.text(label, cx + (cw - d.measure_text(label, 1)) // 2, y0 + 4, cw, 1)
+            d.set_pen(pen)
+            d.text(value, cx + (cw - d.measure_text(value, 2)) // 2, y0 + 16, cw, 2)
+
+    def _rooms(self, d, p, now_ms):
+        """Every indoor sensor online (presto-feed's, as on Brick's ROOMS) plus the Presto's own;
+        an offline one isn't listed. More than fit: pages of four, turning every 6 s."""
+        ctx, room = self.ctx, self.ctx.room
+        x0, y0, w, h = 12, self.ROOMS_Y, 216, self.ROOMS_H
+        flick = random.random() < 0.06
+        self._panel(d, p, x0, y0, w, h, p.magenta if flick else p.cyan)
+        d.set_pen(self.scan_pen)
         off = (now_ms // 60) % 3
         for yy in range(y0 + 2 + off, y0 + h - 1, 3):  # drifting hologram scanlines
             d.line(x0 + 1, yy, x0 + w - 2, yy)
+        rows = uplink.indoor(ctx.uplink.data, ctx.fahrenheit, room.temp)
+        per = (h - 18) // self.PITCH
+        shown, n, pages = self.fx.page(rows, per, now_ms)
         d.set_pen(p.magenta)
-        d.text("ROOM", x0 + 7, y0 + 6, 200, 1)
-        rows = []
-        if room.temp is not None:
-            rows.append(("TEMP", "%.1f" % room.temp))
-            rows.append(("HUMIDITY", "%d%%" % round(room.humidity)))
-            rows.append(("PRESSURE", "%d hPa" % round(room.pressure)))
-        if room.lux is not None:
-            rows.append(("LIGHT", "%d lux" % round(room.lux)))
-        if not rows:
-            rows.append(("SENSORS", "OFFLINE"))
-        for i, (k, v) in enumerate(rows):
-            yy = y0 + 21 + i * 18
+        d.text("ROOMS", x0 + 7, y0 + 5, 100, 1)
+        right = None
+        if self.receiving:
+            right, pen = "RECEIVING", p.amber
+        elif pages > 1:
+            right, pen = "%d/%d" % (n + 1, pages), p.dim
+        elif room.humidity is not None:
+            right, pen = "RH %d%%" % round(room.humidity), p.dim  # the Presto's own, as before
+        if right:
+            d.set_pen(pen)
+            d.text(right, x0 + w - 7 - d.measure_text(right, 1), y0 + 5, 100, 1)
+        if not shown:
             d.set_pen(p.dim)
-            d.text(k, x0 + 7, yy + 3, 100, 1)
-            d.set_pen(p.text if not flick else p.cyan)
-            d.text(v, x0 + 100, yy, 110, 2)
+            d.text("SENSORS OFFLINE", x0 + 7, y0 + 24, 200, 2)
+            return
+        unit = "F" if ctx.fahrenheit else "C"
+        for i, (name, temp) in enumerate(shown):
+            yy = y0 + 18 + i * self.PITCH
+            d.set_pen(p.dim)
+            d.text(name[:16], x0 + 7, yy + 4, 130, 1)
+            v = f"{temp:.1f}{unit}"
+            d.set_pen(p.cyan if flick else p.text)
+            d.text(v, x0 + w - 7 - d.measure_text(v, 2), yy, 100, 2)
 
 
 class Photos(Screen):
@@ -255,7 +348,7 @@ class Brick(Screen):
     def __init__(self, ctx):
         super().__init__(ctx)
         self.rain = fx.GlyphRain(cols=16, scale=1, top=0, bottom=H, length=(5, 10))
-        self.uplink = uplink.Uplink(ctx.settings.get("brick_feed"))
+        self.uplink = ctx.uplink  # shared with Weather's rooms
         self.tab = 0
         self.typed = 0
         self.receiving = False
@@ -273,17 +366,12 @@ class Brick(Screen):
     def tick(self, now_ms):
         """The fetch and gc.collect() + statvfs (~200 ms) run here, in the main loop between
         frames, never in draw(). A fetch first shows RECEIVING for a frame: it stalls ~3 s."""
-        if self.uplink.due(now_ms) and self.ctx.net.up:
-            if not self.receiving:
-                self.receiving = True  # draw RECEIVING first, fetch on the next pass
-                return
-            try:
-                if self.uplink.fetch(now_ms):
-                    flags = uplink.health(self.uplink.data)
-                    for i in range(len(self.rain.cols)):
-                        self.rain.set_health(i, flags[i % len(flags)] if flags else True)
-            finally:
-                self.receiving = False
+        if _feed_tick(self, now_ms):
+            flags = uplink.health(self.uplink.data)
+            for i in range(len(self.rain.cols)):
+                self.rain.set_health(i, flags[i % len(flags)] if flags else True)
+        elif self.receiving:
+            return  # RECEIVING is drawn first; the fetch runs on the next pass
         if self.info is not None and time.ticks_diff(now_ms, self.info_at) <= 3000:
             return
         gc.collect()
