@@ -16,7 +16,7 @@ import json
 import time
 
 POLL_MS = 3000
-TIMEOUT_S = 4.0  # a service call waits for the bulb's Bluetooth write
+TIMEOUT_S = 12.0  # a service call waits for the bulb's Bluetooth write; a reconnect takes ~10 s
 POLL_TIMEOUT_S = 2.0  # a state read is Home Assistant's memory (stepped: it doesn't hold up the screen)
 
 # The app's scene keys: light.turn_on data, like brick-status's lamp.yaml, and each
