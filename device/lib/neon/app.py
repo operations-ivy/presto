@@ -2,7 +2,7 @@
 
 import time
 
-from neon import card, conf, fx, nav, services, theme
+from neon import card, conf, fx, nav, roomhttp, services, theme, uplink
 
 DEFAULTS = {
     "idle_seconds": 14400,  # 4 h with no touch: go to idle_screen
@@ -33,6 +33,7 @@ DEFAULTS = {
     "lights": "light.lamp",  # the light app's lights, comma-separated
     "leds_light": "light.lamp",  # the back LEDs follow this light (hue.py); empty: the screen's own
     "leds_floor": 1.0,  # their brightness at the light's lowest: full, they face the wall
+    "room_port": 8767,  # /room.json and /metrics for Home Assistant and Prometheus (presto#8); 0: off
 }
 
 
@@ -56,6 +57,8 @@ def run(presto, secrets):
     ctx.clock = services.Clock(s["utc_offset"], None if s["dst"] == "none" else s["dst"])
     ctx.weather = services.Weather(secrets, ctx.fahrenheit)
     ctx.room = services.Room(ctx.fahrenheit, s["temp_offset_c"])
+    room_server = roomhttp.Server(ctx.room, s["room_port"]) if s["room_port"] else None
+    ctx.uplink = uplink.Uplink(s["brick_feed"])  # presto-feed: Brick's pages and Weather's rooms
     chirp = services.Chirp(s["chirp"], s["chirp_volume"])
     card.mount()
     from neon import photosync
@@ -179,6 +182,8 @@ def run(presto, secrets):
                 ctx.weather.fetch(ctx.clock)
                 cur.dirty = True
             ctx.room.read()
+            if room_server is not None:
+                room_server.step(ctx.net.up, now)
             ctx.feed.step(ctx.net, last_touch)
             ctx.ota.step(ctx.net, last_touch, now)
             if ctx.ota_shown:  # a download that didn't end in a restart: the LEDs come back

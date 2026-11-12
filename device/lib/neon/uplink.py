@@ -6,12 +6,12 @@ indoor temperature Home Assistant has online, plus the Presto's own sensor, and
 this node. Passive only: a problem shows as a red line and a stuttering column,
 never a sound or a takeover.
 
-cluster(), rooms() and health() are pure (tested on the laptop); Uplink does the fetch.
+cluster(), rooms(), indoor() and health() are pure (tested on the laptop); Uplink does the fetch.
 """
 
 import time
 
-EVERY_MS = 60000  # a fetch is a ~3 s TLS connect that stalls the screen: once a minute, on Brick only
+EVERY_MS = 60000  # a fetch is a ~3 s TLS connect that stalls the screen: once a minute, on Brick or Weather only
 FIRST_MS = 1500  # after entering, let the screen draw before the first fetch
 STALE_S = 180  # older than this (here or at the feed): STALE
 TABS = ("CLUSTER", "ROOMS")
@@ -26,10 +26,7 @@ REASONS = {
 
 # (text, kind): kind "h" a heading, "bad" a problem, "" plain
 H, BAD, OK = "h", "bad", ""
-
-
-def _deg(c, fahrenheit):
-    return "%.1f%s" % ((c * 9 / 5 + 32, "F") if fahrenheit else (c, "C"))
+OWN = "PRESTO"  # the Presto's own sensor; Home Assistant's copy of it is "Presto temperature"
 
 
 def _short(s, n):
@@ -158,13 +155,26 @@ def _cluster(data, cap, more=1, last=1):
     return out
 
 
+def indoor(data, fahrenheit, own_temp=None):
+    """Every indoor sensor online, as (NAME, temperature in the display's unit): the feed's,
+    by name, then the Presto's own (own_temp, already in that unit). While the Presto reads,
+    the feed's copy of it (through Home Assistant, a minute or more behind) is left out."""
+    out = []
+    for t in (data or {}).get("temps", []):
+        name = str(t["n"]).upper()
+        if own_temp is not None and name == OWN:
+            continue
+        out.append((name, t["c"] * 9 / 5 + 32 if fahrenheit else t["c"]))
+    if own_temp is not None:
+        out.append((OWN, own_temp))
+    return out
+
+
 def rooms(data, fahrenheit, own_temp=None):
     """own_temp: the Presto's sensor, already in the display's unit."""
+    unit = "F" if fahrenheit else "C"
     out = [("> INDOOR", H)]
-    for t in (data or {}).get("temps", []):
-        out.append(("  %-14s %s" % (_short(t["n"], 14), _deg(t["c"], fahrenheit)), OK))
-    if own_temp is not None:
-        out.append(("  %-14s %.1f%s" % ("PRESTO", own_temp, "F" if fahrenheit else "C"), OK))
+    out.extend(("  %-14s %.1f%s" % (_short(n, 14), t, unit), OK) for n, t in indoor(data, fahrenheit, own_temp))
     if len(out) == 1:
         out.append(("  NO SENSORS ONLINE", OK))
     return out
@@ -207,7 +217,7 @@ class Uplink:
         return None if self.got_at is None else time.ticks_diff(now_ms, self.got_at) // 1000
 
     def entered(self, now_ms):
-        """On Brick: fetch soon if the last answer is a minute old (or there is none)."""
+        """On Brick or Weather: fetch soon if the last answer is a minute old (or there is none)."""
         if self.got_at is None or time.ticks_diff(now_ms, self.got_at) >= EVERY_MS:
             self.next_at = time.ticks_add(now_ms, FIRST_MS)
 
