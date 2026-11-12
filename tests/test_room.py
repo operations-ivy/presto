@@ -4,7 +4,8 @@ import errno
 import json
 import types
 
-from neon import roomhttp, uplink, weatherfx
+import pytest
+from neon import roomhttp, uplink, weatherfx, wx
 
 
 def room(read_at=1000, temp_f=71.234, humidity=40.06, pressure=1012.34, lux=120.4, reads=None):
@@ -54,13 +55,34 @@ def test_metrics_drop_the_readings_when_stale_or_missing():
     assert "presto_room_light_lux" not in no_light and "presto_room_temperature_fahrenheit 71.23" in no_light
 
 
-def test_request_path_and_routes():
-    assert roomhttp.request_path(b"GET /room.json?x=1 HTTP/1.1\r\nHost: presto\r\n\r\n") == ("GET", "/room.json")
-    assert roomhttp.request_path(b"GET /metr") is None
-    assert roomhttp.respond("GET", "/room.json", room(), 2000)[1] == "application/json"
-    assert roomhttp.respond("GET", "/metrics", room(), 2000)[0] == "200 OK"
-    assert roomhttp.respond("GET", "/", room(), 2000)[0] == "404 Not Found"
-    assert roomhttp.respond("POST", "/metrics", room(), 2000)[0] == "405 Method Not Allowed"
+@pytest.mark.parametrize(
+    "raw, want",
+    [
+        (b"GET /room.json?x=1 HTTP/1.1\r\nHost: presto\r\n\r\n", ("GET", "/room.json")),
+        (b"GET /metr", None),
+        (b"\xff\xfe\r\n\r\n", ("", "")),  # not text: a bad request, not a crash
+    ],
+)
+def test_request_path(raw, want):
+    assert roomhttp.request_path(raw) == want
+
+
+@pytest.mark.parametrize(
+    "method, path, status, ctype",
+    [
+        ("GET", "/room.json", "200 OK", "application/json"),
+        ("GET", "/metrics", "200 OK", "text/plain; version=0.0.4"),
+        ("HEAD", "/metrics", "200 OK", "text/plain; version=0.0.4"),
+        ("GET", "/", "404 Not Found", "text/plain"),
+        ("POST", "/metrics", "405 Method Not Allowed", "text/plain"),
+        ("", "", "405 Method Not Allowed", "text/plain"),
+    ],
+)
+def test_routes(method, path, status, ctype):
+    assert roomhttp.respond(method, path, room(), 2000)[:2] == (status, ctype)
+
+
+def test_head_has_no_body():
     head = roomhttp.http("200 OK", "text/plain", "abc", head=True)
     assert head.endswith(b"\r\n\r\n") and b"Content-Length: 3" in head
 
@@ -139,6 +161,21 @@ def test_server_waits_for_wifi_then_answers_a_request_in_pieces():
     assert client.closed and srv.clients == [] and srv.served == 1
 
 
+def test_server_drops_a_trickling_client():
+    client = FakeClient([b"G", b"E", b"T", b" "] * 10)
+    srv = roomhttp.Server(room(), sockets=fake_sockets(FakeListener([client])))
+    for t in range(0, roomhttp.READ_MS + 500, 250):
+        srv.step(True, t)
+    assert client.closed and client.sent == b"" and srv.clients == []
+
+
+def test_server_answers_binary_garbage_without_raising():
+    client = FakeClient([b"\xff\xfe\x00\r\n\r\n"])
+    srv = roomhttp.Server(room(), sockets=fake_sockets(FakeListener([client])))
+    srv.step(True, 0)
+    assert client.sent.startswith(b"HTTP/1.0 405") and client.closed
+
+
 def test_server_drops_a_silent_client():
     client = FakeClient([])
     srv = roomhttp.Server(room(), sockets=fake_sockets(FakeListener([client])))
@@ -162,7 +199,7 @@ def test_indoor_shows_the_bedroom_once_brick1982_is_back():
 
 
 def test_indoor_keeps_home_assistants_copy_while_the_presto_cant_read():
-    assert [(n, t) for n, t in uplink.indoor(FEED, False, None)] == [("MY ECOBEE", 22.2), ("PRESTO", 21.0)]
+    assert uplink.indoor(FEED, False, None) == [("MY ECOBEE", 22.2), ("PRESTO", 21.0)]
     assert uplink.indoor(None, True, None) == []
     assert uplink.indoor(None, True, 70.0) == [("PRESTO", 70.0)]
 
@@ -182,9 +219,24 @@ def test_page_turns_when_rows_overflow():
 
 
 def test_every_weather_kind_has_a_scene():
-    from neon import wx
-
     for _, kind in wx.KINDS:
         assert weatherfx.layers(kind) is weatherfx.SCENES[kind]
     assert weatherfx.layers("nonsense") is weatherfx.SCENES["unknown"]
     assert weatherfx.layers("storm")["bolts"] and weatherfx.layers("clear")["sun"]
+
+
+class _Pens:
+    def rgb(self, *rgb):
+        return rgb
+
+    def __getattr__(self, name):
+        return name
+
+
+def test_the_effect_pools_cover_the_busiest_scene():
+    sky = weatherfx.Sky(_Pens())
+    scenes = weatherfx.SCENES.values()
+    assert len(sky.streaks) >= max(s["rain"] for s in scenes)
+    assert len(sky.flakes) >= max(s["snow"] for s in scenes)
+    assert len(sky.clouds) >= max(s["clouds"] for s in scenes)
+    assert len(sky.banks) >= max(s["fog"] for s in scenes)

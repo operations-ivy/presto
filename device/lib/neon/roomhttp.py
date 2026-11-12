@@ -72,20 +72,18 @@ def metrics(room, now_ms):
     up = fresh(room, now_ms)
     out = []
     for name, kind, help_, field in METRICS:
-        if field is None:
-            values = (
-                [("", 1 if up else 0)]
-                if kind == "gauge"
-                else [('{result="%s"}' % k, room.reads[k]) for k in sorted(room.reads)]
-            )
+        if name == "presto_room_sensor_up":
+            values = [("", 1 if up else 0)]
+        elif name == "presto_room_reads_total":
+            values = [('{result="%s"}' % k, room.reads[k]) for k in sorted(room.reads)]
         else:
             v = getattr(room, field[0])
             if not up or v is None:
                 continue
             values = [("", _round(v, field[1]))]
-        out.append("# HELP {} {}".format(name, help_))
-        out.append("# TYPE {} {}".format(name, kind))
-        out.extend("{}{} {}".format(name, labels, v) for labels, v in values)
+        out.append(f"# HELP {name} {help_}")
+        out.append(f"# TYPE {name} {kind}")
+        out.extend(f"{name}{labels} {v}" for labels, v in values)
     return "\n".join(out) + "\n"
 
 
@@ -94,7 +92,10 @@ def request_path(raw):
     end = raw.find(b"\r\n")
     if end < 0:
         return None
-    parts = raw[:end].decode().split(" ")
+    try:
+        parts = raw[:end].decode().split(" ")
+    except ValueError:  # not text (UnicodeError): a bad request, never a crash in the main loop
+        return ("", "")
     if len(parts) < 2:
         return ("", "")
     return (parts[0], parts[1].split("?")[0])
@@ -178,12 +179,13 @@ class Server:
 
     def _serve(self, cl, now_ms):
         c = cl[0]
+        if _ticks_since(now_ms, cl[2]) > READ_MS:  # silent or trickling: the request is late either way
+            self._drop(cl)
+            return
         try:
             chunk = c.recv(512)
         except OSError as e:
             if _errno(e) not in WAIT:
-                self._drop(cl)
-            elif _ticks_since(now_ms, cl[2]) > READ_MS:
                 self._drop(cl)
             return
         if not chunk:  # closed before asking

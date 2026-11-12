@@ -5,7 +5,7 @@ import os
 import random
 import time
 
-from neon import card, fx, hue, theme, uplink, wx
+from neon import card, fx, hue, theme, uplink, weatherfx, wx
 
 W = H = 240
 
@@ -39,17 +39,22 @@ class Screen:
         raise NotImplementedError
 
 
+# _feed_tick's answers
+IDLE, PENDING, FETCHED, FAILED = "idle", "pending", "fetched", "failed"
+
+
 def _feed_tick(screen, now_ms):
     """presto-feed's fetch for Brick and Weather (ctx.uplink, shared), between frames. It stalls
-    ~3 s (TLS), so the screen first shows RECEIVING for a frame. True after a good fetch."""
+    ~3 s (TLS), so the screen first shows RECEIVING for a frame (PENDING) and fetches on the
+    next pass (FETCHED or FAILED). IDLE: nothing due."""
     up = screen.ctx.uplink
     if not (up.due(now_ms) and screen.ctx.net.up):
-        return False
+        return IDLE
     if not screen.receiving:
-        screen.receiving = True  # draw RECEIVING first, fetch on the next pass
-        return False
+        screen.receiving = True
+        return PENDING
     try:
-        return up.fetch(now_ms)
+        return FETCHED if up.fetch(now_ms) else FAILED
     finally:
         screen.receiving = False
 
@@ -67,9 +72,6 @@ class Weather(Screen):
 
     def __init__(self, ctx):
         super().__init__(ctx)
-        from neon import weatherfx
-
-        self.fx = weatherfx
         self.sky = weatherfx.Sky(ctx.pens)
         self.receiving = False
         p, night = ctx.pens, theme.PALETTE["night"]
@@ -139,12 +141,11 @@ class Weather(Screen):
         """Today like a forecast panel: HIGH, LOW and RAIN in three cells."""
         x0, y0, w, h = 12, 96, 216, 36
         self._panel(d, p, x0, y0, w, h, p.line)
-        have = s is not None and s.get("hi") is not None
-        cells = (
-            ("HIGH", "%d" % round(s["hi"]) if have else "--", p.sodium),
-            ("LOW", "%d" % round(s["lo"]) if have and s.get("lo") is not None else "--", p.cyan),
-            ("RAIN", "%d%%" % s["rain_pct"] if have and s.get("rain_pct") is not None else "--", p.text),
-        )
+        def num(key, fmt="%d"):
+            v = s.get(key) if s else None
+            return "--" if v is None else fmt % round(v)
+
+        cells = (("HIGH", num("hi"), p.sodium), ("LOW", num("lo"), p.cyan), ("RAIN", num("rain_pct", "%d%%"), p.text))
         cw = w // 3
         for i, (label, value, pen) in enumerate(cells):
             cx = x0 + i * cw
@@ -169,7 +170,7 @@ class Weather(Screen):
             d.line(x0 + 1, yy, x0 + w - 2, yy)
         rows = uplink.indoor(ctx.uplink.data, ctx.fahrenheit, room.temp)
         per = (h - 18) // self.PITCH
-        shown, n, pages = self.fx.page(rows, per, now_ms)
+        shown, n, pages = weatherfx.page(rows, per, now_ms)
         d.set_pen(p.magenta)
         d.text("ROOMS", x0 + 7, y0 + 5, 100, 1)
         right = None
@@ -366,12 +367,13 @@ class Brick(Screen):
     def tick(self, now_ms):
         """The fetch and gc.collect() + statvfs (~200 ms) run here, in the main loop between
         frames, never in draw(). A fetch first shows RECEIVING for a frame: it stalls ~3 s."""
-        if _feed_tick(self, now_ms):
+        state = _feed_tick(self, now_ms)
+        if state == PENDING:
+            return  # RECEIVING is drawn first; the fetch runs on the next pass
+        if state == FETCHED:
             flags = uplink.health(self.uplink.data)
             for i in range(len(self.rain.cols)):
                 self.rain.set_health(i, flags[i % len(flags)] if flags else True)
-        elif self.receiving:
-            return  # RECEIVING is drawn first; the fetch runs on the next pass
         if self.info is not None and time.ticks_diff(now_ms, self.info_at) <= 3000:
             return
         gc.collect()

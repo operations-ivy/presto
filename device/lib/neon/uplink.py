@@ -26,6 +26,7 @@ REASONS = {
 
 # (text, kind): kind "h" a heading, "bad" a problem, "" plain
 H, BAD, OK = "h", "bad", ""
+OWN = "PRESTO"  # the Presto's own sensor; Home Assistant's copy of it is "Presto temperature"
 
 
 def _short(s, n):
@@ -154,9 +155,6 @@ def _cluster(data, cap, more=1, last=1):
     return out
 
 
-OWN = "PRESTO"  # the Presto's own sensor; Home Assistant's copy of it is "Presto temperature"
-
-
 def indoor(data, fahrenheit, own_temp=None):
     """Every indoor sensor online, as (NAME, temperature in the display's unit): the feed's,
     by name, then the Presto's own (own_temp, already in that unit). While the Presto reads,
@@ -219,7 +217,7 @@ class Uplink:
         return None if self.got_at is None else time.ticks_diff(now_ms, self.got_at) // 1000
 
     def entered(self, now_ms):
-        """On Brick: fetch soon if the last answer is a minute old (or there is none)."""
+        """On Brick or Weather: fetch soon if the last answer is a minute old (or there is none)."""
         if self.got_at is None or time.ticks_diff(now_ms, self.got_at) >= EVERY_MS:
             self.next_at = time.ticks_add(now_ms, FIRST_MS)
 

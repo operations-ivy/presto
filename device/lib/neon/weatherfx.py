@@ -75,22 +75,22 @@ class Sky:
 
     def draw(self, d, kind, day, sky_pen, now_ms):
         """sky_pen: the sky's colour behind the moon (its crescent is cut out with it)."""
-        L = layers(kind)
+        scene = layers(kind)
         self.frame += 1
         tone = "day" if day else "night"
-        if L["sun"] and day:
+        if scene["sun"] and day:
             self._sun(d, now_ms)
-        elif L["sun"]:
+        elif scene["sun"]:
             self._moon(d, sky_pen)
-        if L["clouds"]:
-            self._clouds(d, L["clouds"], tone)
-        if L["fog"]:
-            self._fog(d, L["fog"], tone)
-        if L["rain"]:
-            self._rain(d, L["rain"])
-        if L["snow"]:
-            self._snow(d, L["snow"])
-        if L["bolts"]:
+        if scene["clouds"]:
+            self._clouds(d, scene["clouds"], tone)
+        if scene["fog"]:
+            self._fog(d, scene["fog"], tone)
+        if scene["rain"]:
+            self._rain(d, scene["rain"])
+        if scene["snow"]:
+            self._snow(d, scene["snow"])
+        if scene["bolts"]:
             self._lightning(d, now_ms)
 
     def _sun(self, d, now_ms):
