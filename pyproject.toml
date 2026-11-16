@@ -13,6 +13,8 @@ pillow-heif = "^1.1"
 numpy = "^2.2"
 prometheus-client = "^0.22.0"
 brick-observe = { git = "https://github.com/operations-ivy/brick-observe.git", tag = "v0.1.1", extras = ["metrics", "tracing"] }
+pyyaml = "^6.0"
+mutagen = "^1.47"
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^4.2.0"

@@ -67,6 +67,19 @@ h1.glitch{animation:glitch .35s steps(2) 1}
 .q.err .st{color:var(--red)} .q.done .st{color:var(--phosphor)}
 .bar{height:4px;background:var(--line);margin-top:8px;border-radius:2px;overflow:hidden}
 .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--magenta),var(--cyan));box-shadow:0 0 10px var(--cyan);transition:width .2s}
+.q .where{margin-top:6px;color:var(--cyan);font-size:13px;overflow-wrap:anywhere}
+.q .where:empty{display:none}
+.q.review .st{color:var(--amber)} .q.review .where{color:var(--amber)}
+
+/* media: where each upload was filed */
+.media{display:grid;gap:6px;margin-bottom:26px}
+.m{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);
+  border-left:3px solid var(--violet);border-radius:4px;padding:8px 10px;font-family:var(--mono);font-size:13px}
+.m .path{color:var(--text);overflow-wrap:anywhere;min-width:0}
+.m .path small{display:block;color:var(--faint);font-size:12px}
+.m .sz{color:var(--dim);white-space:nowrap}
+.m.review{border-left-color:var(--amber)}
+.chip.movie{color:var(--cyan)} .chip.show{color:var(--violet)} .chip.music{color:var(--magenta)} .chip.review{color:var(--amber)}
 
 h2{font-family:var(--pixel);font-weight:400;font-size:15px;letter-spacing:3px;color:var(--amber);margin:6px 0 12px;
   text-shadow:0 0 8px rgba(249,200,14,.45)}
@@ -134,11 +147,18 @@ input[type=range]{width:100%;accent-color:var(--cyan);margin:12px 0 4px}
     <div class="status" id="status">STORE <b>--</b><br>QUEUE <b>0</b></div>
   </header>
 
-  <button class="add" id="add" type="button"><span class="plus">+</span> ADD PHOTOS</button>
-  <input id="file" type="file" multiple accept="image/heic,image/heif,image/jpeg,image/png" hidden>
-  <p class="hint">Pick any photos. Each one becomes a 240&times;240 frame, dithered for the Presto's screen.</p>
+  <button class="add" id="add" type="button"><span class="plus">+</span> ADD PHOTOS / MEDIA</button>
+  <input id="file" type="file" multiple hidden
+    accept="image/heic,image/heif,image/jpeg,image/png,audio/*,video/*,.mkv,.mka,.flac,.opus,.m4a,.m4v,.avi,.wmv,.mpg,.mpeg,.ts,.webm,.ogg,.wav,.aiff">
+  <p class="hint">Photos become 240&times;240 frames for the Presto. Films, episodes and music are filed on the media drive
+    with clean names (up to 20 GB a file); anything unclear waits in review.</p>
 
   <div class="queue" id="queue"></div>
+
+  <section id="mediabox" hidden>
+    <h2>MEDIA // FILED</h2>
+    <div class="media" id="media"></div>
+  </section>
 
   <h2>ON THE FRAME</h2>
   <div class="grid" id="grid"></div>
@@ -235,7 +255,7 @@ function staticBurst(){
 
 // ---- uploads ----
 $("add").onclick = () => $("file").click();
-$("file").onchange = () => { for (const f of $("file").files) upload(f); $("file").value = ""; };
+$("file").onchange = () => { for (const f of $("file").files) (isPhoto(f) ? upload(f) : queueMedia(f)); $("file").value = ""; };
 
 function upload(f){
   const q = document.createElement("div"); q.className = "q";
@@ -258,13 +278,114 @@ function upload(f){
   x.send(f);
 }
 
+// ---- media: audio and video, in chunks, one file at a time ----
+const PHOTO_EXT = /\.(heic|heif|jpe?g|png)$/i;
+const isPhoto = (f) => PHOTO_EXT.test(f.name) || (!/\.[a-z0-9]+$/i.test(f.name) && /^image\//.test(f.type));
+let mediaChain = Promise.resolve(), mediaBusy = 0;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const say = (q, text, cls) => { q.querySelector(".st").textContent = text; if (cls) q.classList.add(cls); };
+
+function queueMedia(f){
+  const q = document.createElement("div"); q.className = "q";
+  q.innerHTML = '<div class="row"><span class="name"></span><span class="st">WAITING</span></div><div class="bar"><i></i></div><div class="where"></div>';
+  q.querySelector(".name").textContent = f.name + "  (" + fmtMB(f.size) + ")";
+  $("queue").prepend(q);
+  mediaBusy++;
+  mediaChain = mediaChain.then(() => mediaUpload(f, q)).catch(() => say(q, "NO SIGNAL", "err")).finally(() => { mediaBusy--; });
+}
+
+function sendChunk(up, offset, blob, onSent){
+  return new Promise((resolve) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", "/api/media/chunk?upload=" + up + "&offset=" + offset);
+    x.setRequestHeader("X-Presto", "1");
+    x.setRequestHeader("Content-Type", "application/octet-stream");
+    x.upload.onprogress = (e) => onSent(e.loaded);
+    x.onload = () => { let b = {}; try { b = JSON.parse(x.responseText); } catch (e) {} resolve({status: x.status, body: b}); };
+    x.onerror = x.ontimeout = () => resolve(null);
+    x.send(blob);
+  });
+}
+
+async function mediaUpload(f, q){
+  const bar = q.querySelector("i");
+  let lock = null;
+  try { lock = navigator.wakeLock ? await navigator.wakeLock.request("screen") : null; } catch (e) {}
+  try {
+    const r = await fetch("/api/media/begin", {method: "POST", headers: Object.assign({"Content-Type": "application/json"}, H),
+      body: JSON.stringify({filename: f.name, bytes: f.size, type: f.type})});
+    const b = await r.json().catch(() => ({}));
+    if (!r.ok){ say(q, String(b.error || r.status).toUpperCase(), "err"); return; }
+    const up = b.upload, chunk = b.chunk;
+    let offset = b.offset, tries = 0;
+    say(q, "SENDING");
+    while (offset < f.size){
+      const res = await sendChunk(up, offset, f.slice(offset, Math.min(offset + chunk, f.size)),
+        (sent) => { bar.style.width = (100 * (offset + sent) / f.size) + "%"; });
+      if (res && (res.status === 200 || res.status === 202)){
+        offset = typeof res.body.offset === "number" ? res.body.offset : f.size; tries = 0;
+        say(q, "SENDING " + Math.floor(100 * offset / f.size) + "%");
+        continue;
+      }
+      if (res && res.status === 409 && typeof res.body.offset === "number"){ offset = res.body.offset; continue; }
+      if (res && res.status < 500 && res.status !== 400){ say(q, String(res.body.error || res.status).toUpperCase(), "err"); return; }
+      if (++tries > 8){ say(q, "NO SIGNAL", "err"); return; }
+      say(q, "RECONNECTING");
+      await sleep(Math.min(30000, 1000 * 2 ** tries));
+      try {  // where the server really is: it keeps what arrived, so this resumes, not restarts
+        const s = await (await fetch("/api/media/status?upload=" + up, {cache: "no-store"})).json();
+        if (s.status === "receiving") offset = s.offset; else if (s.status) offset = f.size;
+      } catch (e) {}
+    }
+    bar.style.width = "100%";
+    say(q, "SORTING");
+    for (;;){  // the sorter copies it onto the drive: a film takes a few minutes
+      await sleep(3000);
+      let s = {};
+      try { s = await (await fetch("/api/media/status?upload=" + up, {cache: "no-store"})).json(); } catch (e) { continue; }
+      if (s.status === "filed" || s.status === "review"){
+        say(q, s.status === "filed" ? "FILED // " + s.kind.toUpperCase() : "REVIEW", s.status === "filed" ? "done" : "review");
+        q.querySelector(".where").textContent = s.share + "/" + s.path + (s.reason ? "  (" + s.reason + ")" : "");
+        refreshMedia();
+        return;
+      }
+    }
+  } finally {
+    if (lock) lock.release().catch(() => {});
+  }
+}
+addEventListener("beforeunload", (e) => { if (mediaBusy){ e.preventDefault(); e.returnValue = ""; } });
+
+async function refreshMedia(){
+  let d;
+  try {
+    const r = await fetch("/api/media/recent", {cache: "no-store"});
+    if (r.status === 404){ $("mediabox").hidden = true; return; }
+    d = await r.json();
+  } catch (e) { return; }
+  $("mediabox").hidden = false;
+  refreshMedia.status = "MEDIA <b>" + fmtMB(d.usage) + "</b> / " + fmtMB(d.limit);
+  const list = $("media"); list.innerHTML = "";
+  if (!d.recent.length) list.innerHTML = '<div class="empty">NOTHING FILED YET.</div>';
+  for (const m of d.recent){
+    const row = document.createElement("div"); row.className = "m" + (m.status === "review" ? " review" : "");
+    row.innerHTML = '<span class="chip ' + esc(m.kind) + '">' + esc(m.kind).toUpperCase() + '</span><span class="path"></span><span class="sz"></span>';
+    row.querySelector(".path").textContent = m.share + "/" + m.path;
+    if (m.filename){ const s = document.createElement("small"); s.textContent = "from " + m.filename; row.querySelector(".path").appendChild(s); }
+    row.querySelector(".sz").textContent = fmtMB(m.bytes || 0);
+    list.appendChild(row);
+  }
+  clearTimeout(refreshMedia.t); refreshMedia.t = setTimeout(refreshMedia, 20000);
+}
+
 // ---- the library ----
 function fmtMB(b){ return (b / 1073741824 >= 1 ? (b / 1073741824).toFixed(2) + " GB" : (b / 1048576).toFixed(0) + " MB"); }
 async function refresh(){
   let d;
   try { d = await (await fetch("/api/photos", {cache: "no-store"})).json(); } catch (e) { $("status").innerHTML = "STORE <b>OFFLINE</b>"; return; }
   photos = d.photos;
-  $("status").innerHTML = "STORE <b>" + fmtMB(d.usage) + "</b> / " + fmtMB(d.limit) + "<br>QUEUE <b>" + d.pending + "</b>";
+  $("status").innerHTML = "STORE <b>" + fmtMB(d.usage) + "</b> / " + fmtMB(d.limit) + "<br>QUEUE <b>" + d.pending + "</b>"
+    + (refreshMedia.status ? "<br>" + refreshMedia.status : "");
   const grid = $("grid"); grid.innerHTML = "";
   if (!photos.length){ grid.innerHTML = '<div class="empty" style="grid-column:1/-1">NO PHOTOS YET. ADD SOME.</div>'; }
   for (const p of photos){
@@ -358,7 +479,7 @@ $("apply").onclick = async () => { if (await post("/api/crop?id=" + open, {crop}
 $("hide").onclick = async () => { const p = photos.find((x) => x.id === open); if (await post("/api/hide?id=" + open, {hidden: !p.hidden})) refresh(); };
 $("del").onclick = async () => { if (confirm("Delete this photo from the Presto?") && await post("/api/delete?id=" + open)){ $("sheet").close(); refresh(); } };
 
-refresh();
+refreshMedia().then(refresh);
 </script>
 </body>
 </html>

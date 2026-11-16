@@ -1,0 +1,27 @@
+# Media devices and their tags (presto#39). The upload page's server reads this
+# (a ConfigMap, kustomization.yaml) to answer GET /api/media/sync?device=<name>:
+# the files each device should hold. The tags and their rules are in
+# presto_photos/devices.py and the README ("Media importer"); an unknown tag
+# stops the page from starting, so a typo can't quietly sync nothing.
+#
+#   handheld            plays video on a small screen: the 480p copies
+#   640x480             a 640x480 screen: the 480p copies
+#   medium_graphics     plays video (originals)
+#   high_graphics       plays video at full size (originals)
+#   english_audio_only  no video known to be subtitled-only
+#   music               the music library
+#   photos_240          the Presto's 240x240 photo frames
+#   pi4                 a Raspberry Pi 4 (descriptive)
+devices:
+  brick9000:
+    tags: [pi4, medium_graphics]
+    note: the status board
+  rg476h:
+    tags: [handheld, high_graphics]
+    note: a handheld
+  retroid:
+    tags: [handheld, 640x480, english_audio_only]
+    note: a handheld; subtitles are too small to read on it
+  presto:
+    tags: [photos_240]
+    note: the Presto's photo frame

@@ -4,6 +4,7 @@
 !presto_photos/
 presto_photos/__pycache__/
 !device/
+!k8s_config/devices.yaml
 device/secrets.py
 device/**/secrets.py
 device/**/__pycache__/

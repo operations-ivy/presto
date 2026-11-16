@@ -18,12 +18,25 @@ has no network.
     GET  /photo/<id>.jpg|.rgb565  the Presto's files
     GET  /device/manifest.json, /device/bundle  the Presto's own code (device.py, presto#9)
     GET  /health /ready /metrics
+
+Media (presto#39): audio and video go to their own inbox (inbox.py), in
+chunks, so a film is many short requests (each well inside the proxies'
+timeouts) and a dropped one resumes where it stopped. The sorter files them.
+
+    POST /api/media/begin      {"filename", "bytes", "type"}: {"upload", "chunk"}
+    POST /api/media/chunk?upload=&offset=   the next bytes (raw body, at most MAX_CHUNK);
+                               409 {"offset"} if the server has a different count
+    GET  /api/media/status?upload=   receiving (offset), queued, or where it was filed
+    GET  /api/media/recent     the last uploads filed, the inbox's usage
+    GET  /api/media/devices    every device, its tags, and the tag vocabulary
+    GET  /api/media/sync?device=   what that device should hold (devices.py)
 """
 
 from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -33,7 +46,10 @@ import brick_observe
 from brick_observe import metrics as observe_metrics
 from prometheus_client import Counter
 
+from . import devices as media_devices
+from . import media
 from .device import Release
+from .inbox import Inbox, valid_upload
 from .store import Store, valid_id
 
 log = brick_observe.get_logger(__name__)
@@ -41,13 +57,24 @@ PAGE = (Path(__file__).parent / "static" / "index.html").read_bytes()
 
 MAX_UPLOAD = 60 << 20  # a 48 MP ProRAW-ish HEIC is ~25 MB; this leaves room
 UPLOADS = Counter("photos_uploads_total", "Uploads, by result", ["result"])
+MAX_MEDIA_UPLOAD = 20 << 30  # one file; the inbox's own cap (MEDIA_LIMIT_GB) is for all of them together
+CHUNK = 16 << 20  # what the page sends per request: ~10 s on slow Wi-Fi, well inside Traefik's 60 s
+MAX_CHUNK = 64 << 20
+MEDIA_UPLOADS = Counter("media_uploads_total", "Media uploads, by kind and result", ["kind", "result"])
+SYNCS = Counter("media_sync_requests_total", "Sync manifests served, by device", ["device"])
 PHOTO_FILE = re.compile(r"^/photo/([0-9a-f]{16})\.(jpg|rgb565)$")
 
 
 def device_of(ua: str) -> str:
     """A short, human name for the uploading device, from its User-Agent."""
-    for key, name in (("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"), ("Macintosh", "Mac"),
-                      ("Windows", "Windows"), ("Linux", "Linux")):
+    for key, name in (
+        ("iPhone", "iPhone"),
+        ("iPad", "iPad"),
+        ("Android", "Android"),
+        ("Macintosh", "Mac"),
+        ("Windows", "Windows"),
+        ("Linux", "Linux"),
+    ):
         if key in ua:
             return name
     return "unknown"
@@ -62,12 +89,46 @@ def same_origin(origin: str | None, host: str | None) -> bool:
 SHOWING_FOR_S = 30 * 60  # a report older than this: the Presto isn't on Photos (or is off)
 
 
-def make_handler(store: Store, release: Release | None = None):
+def make_handler(
+    store: Store,
+    release: Release | None = None,
+    inbox: Inbox | None = None,
+    devices: dict[str, media_devices.Device] | None = None,
+):
     showing = {}  # what the Presto last said it shows: {"id", "at"} (in memory: one web pod)
+    devices = devices or {}
+    locks: dict[str, threading.Lock] = {}  # one chunk at a time per upload (the page sends them in order anyway)
+    locks_lock = threading.Lock()
+
+    def lock_for(up: str) -> threading.Lock:
+        with locks_lock:
+            if len(locks) > 1000:  # forget finished uploads' locks
+                for k in [k for k, v in locks.items() if not v.locked()]:
+                    del locks[k]
+            return locks.setdefault(up, threading.Lock())
 
     class Handler(brick_observe.httpserver.Observed, BaseHTTPRequestHandler):
-        routes = {"/", "/api/photos", "/api/upload", "/api/crop", "/api/hide", "/api/delete", "/preview",
-                  "/master", "/manifest.json", "/photo", "/api/showing", "/device/manifest.json", "/device/bundle"}
+        routes = {
+            "/",
+            "/api/photos",
+            "/api/upload",
+            "/api/crop",
+            "/api/hide",
+            "/api/delete",
+            "/preview",
+            "/master",
+            "/manifest.json",
+            "/photo",
+            "/api/showing",
+            "/device/manifest.json",
+            "/device/bundle",
+            "/api/media/begin",
+            "/api/media/chunk",
+            "/api/media/status",
+            "/api/media/recent",
+            "/api/media/devices",
+            "/api/media/sync",
+        }
         server_version = "presto-photos"
         protocol_version = "HTTP/1.1"
 
@@ -97,6 +158,9 @@ def make_handler(store: Store, release: Release | None = None):
             except FileNotFoundError:
                 self.json(404, {"error": "not found"})
 
+        def query(self, key: str) -> str:
+            return (parse_qs(urlsplit(self.path).query).get(key) or [""])[0]
+
         def query_id(self):
             pid = (parse_qs(urlsplit(self.path).query).get("id") or [""])[0]
             return pid if valid_id(pid) else None
@@ -109,8 +173,9 @@ def make_handler(store: Store, release: Release | None = None):
 
         def guarded(self) -> bool:
             """Changes only from the page itself: same Origin and our header."""
-            if self.headers.get("X-Presto") != "1" or not same_origin(self.headers.get("Origin"),
-                                                                       self.headers.get("Host")):
+            if self.headers.get("X-Presto") != "1" or not same_origin(
+                self.headers.get("Origin"), self.headers.get("Host")
+            ):
                 self.json(403, {"error": "uploads and changes only from the Presto page"})
                 return False
             return True
@@ -134,8 +199,19 @@ def make_handler(store: Store, release: Release | None = None):
             if path == "/api/photos":
                 now = int(time.time())
                 on = showing.get("id") if now - showing.get("at", 0) < SHOWING_FOR_S else None
-                return self.json(200, {"photos": store.photos(), "usage": store.usage(), "limit": store.limit,
-                                       "pending": len(store.pending_uploads()), "now": now, "showing": on})
+                return self.json(
+                    200,
+                    {
+                        "photos": store.photos(),
+                        "usage": store.usage(),
+                        "limit": store.limit,
+                        "pending": len(store.pending_uploads()),
+                        "now": now,
+                        "showing": on,
+                    },
+                )
+            if path.startswith("/api/media/"):
+                return self.media_get(path)
             if path == "/manifest.json":
                 return self.file(store.p("manifest.json"), "application/json")
             if path in ("/device/manifest.json", "/device/bundle"):
@@ -165,6 +241,10 @@ def make_handler(store: Store, release: Release | None = None):
                 return
             if path == "/api/upload":
                 return self.upload()
+            if path == "/api/media/begin":
+                return self.media_begin()
+            if path == "/api/media/chunk":
+                return self.media_chunk()
             pid = self.query_id()
             if not pid:
                 return self.json(400, {"error": "bad id"})
@@ -177,8 +257,11 @@ def make_handler(store: Store, release: Release | None = None):
                 return self.json(400, {"error": str(e)})
             if path == "/api/crop":
                 crop = body.get("crop")
-                if (not isinstance(crop, list) or len(crop) != 3
-                        or not all(isinstance(v, (int, float)) and 0 <= v <= 1 for v in crop)):
+                if (
+                    not isinstance(crop, list)
+                    or len(crop) != 3
+                    or not all(isinstance(v, (int, float)) and 0 <= v <= 1 for v in crop)
+                ):
                     return self.json(400, {"error": "crop is [cx, cy, size], each 0..1"})
                 if m.get("status") not in ("ready", "recrop"):
                     return self.json(409, {"error": "not ready yet"})
@@ -241,11 +324,127 @@ def make_handler(store: Store, release: Release | None = None):
             log.info("upload received", upload=up, bytes=n, device=info["device"], content_type=info["content_type"])
             self.json(202, {"upload": up, "status": "queued"})
 
+        # --- media ---
+        def media_get(self, path: str):
+            if inbox is None:
+                return self.json(404, {"error": "no media inbox here"})
+            if path == "/api/media/status":
+                up = self.query("upload")
+                st = inbox.status(up) if valid_upload(up) else None
+                return self.json(200, st) if st else self.json(404, {"error": "no such upload"})
+            if path == "/api/media/recent":
+                return self.json(
+                    200,
+                    {
+                        "recent": inbox.recent(),
+                        "usage": inbox.usage(),
+                        "limit": inbox.limit,
+                        "waiting": len(inbox.pending()),
+                    },
+                )
+            if path == "/api/media/devices":
+                return self.json(
+                    200,
+                    {
+                        "devices": [{"name": d.name, "tags": list(d.tags), "note": d.note} for d in devices.values()],
+                        "vocabulary": media_devices.VOCABULARY,
+                    },
+                )
+            if path == "/api/media/sync":
+                dev = devices.get(self.query("device"))
+                if dev is None:
+                    return self.json(404, {"error": "no such device", "devices": sorted(devices)})
+                SYNCS.labels(dev.name).inc()
+                return self.json(200, media_devices.manifest(dev, inbox.index()))
+            self.json(404, {"error": "not found"})
+
+        def media_begin(self):
+            if inbox is None:
+                return self.json(404, {"error": "no media inbox here"})
+            try:
+                body = self.body_json()
+                filename = str(body.get("filename") or "")[:200]
+                n = int(body.get("bytes"))
+            except (ValueError, TypeError):
+                return self.json(400, {"error": "needs filename and bytes"})
+            kind = media.media_kind(filename) or "other"
+            if kind not in ("audio", "video"):
+                MEDIA_UPLOADS.labels("other", "bad_type").inc()
+                return self.json(415, {"error": "audio or video only here (photos go to /api/upload)"})
+            if n <= 0:
+                MEDIA_UPLOADS.labels(kind, "empty").inc()
+                return self.json(400, {"error": "empty file"})
+            if n > MAX_MEDIA_UPLOAD:
+                MEDIA_UPLOADS.labels(kind, "too_big").inc()
+                return self.json(413, {"error": f"over {MAX_MEDIA_UPLOAD >> 30} GB"})
+            if not inbox.room_for(n):
+                MEDIA_UPLOADS.labels(kind, "full").inc()
+                return self.json(507, {"error": "the media inbox is full: try again once the sorter catches up"})
+            info = {
+                "filename": filename,
+                "content_type": str(body.get("type") or "")[:100],
+                "bytes": n,
+                "kind": kind,
+                "device": device_of(self.headers.get("User-Agent", "")),
+                "from": (self.headers.get("X-Forwarded-For") or self.client_address[0]).split(",")[0].strip(),
+                "received": int(time.time()),
+            }
+            up = inbox.begin(info)
+            log.info("media upload started", upload=up, kind=kind, bytes=n, device=info["device"])
+            self.json(201, {"upload": up, "chunk": CHUNK, "offset": 0})
+
+        def media_chunk(self):
+            if inbox is None:
+                return self.json(404, {"error": "no media inbox here"})
+            up = self.query("upload")
+            info = inbox.info(up) if valid_upload(up) else None
+            if not info:
+                return self.json(404, {"error": "no such upload"})
+            kind = info.get("kind", "other")
+            try:
+                offset = int(self.query("offset"))
+                n = int(self.headers.get("Content-Length") or -1)
+            except ValueError:
+                return self.json(400, {"error": "needs offset and Content-Length"})
+            if n <= 0 or n > MAX_CHUNK or offset + n > info["bytes"]:
+                return self.json(413 if n > MAX_CHUNK else 400, {"error": "bad chunk size"})
+            with lock_for(up):
+                have = inbox.received(up)
+                if have is None:  # complete already, or swept
+                    st = inbox.status(up)
+                    return self.json(409 if not st else 200, st or {"error": "upload gone"})
+                if have != offset:
+                    MEDIA_UPLOADS.labels(kind, "resumed").inc()
+                    return self.json(409, {"error": "offset", "offset": have})
+                left = n
+                with open(inbox.part(up), "ab") as f:
+                    while left:
+                        chunk = self.rfile.read(min(left, 1 << 20))
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        left -= len(chunk)
+                if left:  # cut short: keep what came, the page resumes from it
+                    return self.json(400, {"error": "chunk cut short", "offset": inbox.received(up)})
+                have += n
+                if have < info["bytes"]:
+                    return self.json(200, {"upload": up, "status": "receiving", "offset": have})
+                inbox.finish(up)
+            MEDIA_UPLOADS.labels(kind, "ok").inc()
+            log.info("media upload received", upload=up, kind=kind, bytes=have, device=info.get("device"))
+            self.json(202, {"upload": up, "status": "queued", "offset": have})
+
     return Handler
 
 
-def serve(store: Store, port: int = 8080, release: Release | None = None) -> None:
-    httpd = ThreadingHTTPServer(("", port), make_handler(store, release))
+def serve(
+    store: Store,
+    port: int = 8080,
+    release: Release | None = None,
+    inbox: Inbox | None = None,
+    devices: dict | None = None,
+) -> None:
+    httpd = ThreadingHTTPServer(("", port), make_handler(store, release, inbox, devices))
     httpd.daemon_threads = True
     log.info("web listening", port=port)
     httpd.serve_forever()
