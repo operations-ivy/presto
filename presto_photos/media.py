@@ -16,8 +16,10 @@ from __future__ import annotations
 import re
 import time
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+from typing import NamedTuple
 
 # The same list as brick-k8s-config's media/convert-480p.sh: what gets a 480p copy.
 VIDEO_EXT = frozenset({".mkv", ".mp4", ".m4v", ".avi", ".mov", ".webm", ".ts", ".wmv", ".mpg", ".mpeg"})
@@ -39,16 +41,24 @@ JUNK = re.compile(
 BRACKETS = re.compile(r"\[[^\]]*\]|\{[^}]*\}")
 PARENS = re.compile(r"\(([^)]*)\)")
 YEAR = re.compile(r"(?<!\d)(19\d\d|20\d\d)(?!\d)")
+# (strong, pattern): a weak pattern followed by a "(year)" is a movie's title instead
+# ("Star Wars Episode 4 A New Hope (1977)").
 EPISODE_PATTERNS = (
     # Show S01E02, Show.S01E02E03, Show s1 e2
-    re.compile(r"^(?P<show>.+?)[\s\-]*\bS(?P<season>\d{1,2})\s?E(?P<ep>\d{1,4})(?:-?E\d{1,4})*\b(?P<rest>.*)$", re.I),
+    (
+        True,
+        re.compile(
+            r"^(?P<show>.+?)[\s\-]*\bS(?P<season>\d{1,2})\s?E(?P<ep>\d{1,4})(?:-?E\d{1,4})*\b(?P<rest>.*)$", re.I
+        ),
+    ),
     # Show 1x02
-    re.compile(r"^(?P<show>.+?)[\s\-]*\b(?P<season>\d{1,2})x(?P<ep>\d{2,3})\b(?P<rest>.*)$", re.I),
+    (True, re.compile(r"^(?P<show>.+?)[\s\-]*\b(?P<season>\d{1,2})x(?P<ep>\d{2,3})\b(?P<rest>.*)$", re.I)),
     # Show - 01 - Title, Show - 001, Show - 01v2
-    re.compile(r"^(?P<show>.+?)\s+-\s+(?P<ep>\d{1,4})(?:v\d)?(?=\s|$)(?P<rest>.*)$", re.I),
+    (False, re.compile(r"^(?P<show>.+?)\s+-\s+(?P<ep>\d{1,4})(?:v\d)?(?=\s|$)(?P<rest>.*)$", re.I)),
     # Show Ep 01, Show Ep. 01, Show Episode 01, Show E01, Show #01
-    re.compile(r"^(?P<show>.+?)\s+(?:Ep\.?|Episode|E|#)\s?(?P<ep>\d{1,4})\b(?P<rest>.*)$", re.I),
+    (False, re.compile(r"^(?P<show>.+?)\s+(?:Ep\.?|Episode|E|#)\s?(?P<ep>\d{1,4})\b(?P<rest>.*)$", re.I)),
 )
+YEAR_IN_PARENS = re.compile(r"\((?:19|20)\d\d\)")
 DUB = re.compile(r"(?<![a-z])(?:dub|dubs|dubbed|eng(?:lish)?[ ._-]?dub)(?![a-z])", re.I)
 SUB = re.compile(r"(?<![a-z])(?:sub|subs|subbed|subtitled|eng(?:lish)?[ ._-]?subs?|vostfr|raw)(?![a-z])", re.I)
 UNSAFE = re.compile(r'[\x00-\x1f\x7f"*/<>?\\|]')  # exFAT and Samba refuse these (":" is handled first)
@@ -69,9 +79,22 @@ class Placement:
         return f"{self.folder}/{self.name}"
 
 
-def media_kind(filename: str, content_type: str = "") -> str | None:
-    """ "video", "audio" or "image" by the file's extension; the content type only
-    breaks a tie for an extension in no list. None: not something we take."""
+class Episode(NamedTuple):
+    show: str
+    season: int | None
+    number: str  # the digits as written ("001" stays three wide)
+    title: str
+
+
+class Title(NamedTuple):
+    title: str
+    year: int | None
+    after: str  # what followed a bare year ("OVA 02" in "Birdy 1996 OVA 02")
+
+
+def media_kind(filename: str) -> str | None:
+    """ "video", "audio" or "image" by the file's extension (a browser's content
+    type isn't trusted). None: not something we take."""
     ext = PurePosixPath(filename.lower()).suffix
     if ext in VIDEO_EXT:
         return "video"
@@ -125,11 +148,10 @@ def _cut_junk(s: str) -> str:
 
 
 def _tidy(s: str) -> str:
-    s = re.sub(r"\s+", " ", s).strip(" -._,")
-    return s
+    return re.sub(r"\s+", " ", s).strip(" -._,")
 
 
-def clean_title(stem: str) -> tuple[str, int | None, str]:
+def clean_title(stem: str) -> Title:
     """A video's stem, tidied: (title, year or None, what followed a bare year).
     Bracket tags go ("[Group]", "[1080p]", "{hash}"), a "(1988)" becomes the
     year, and the rest is cut at the first release token (1080p, x264, BluRay...)."""
@@ -149,25 +171,23 @@ def clean_title(stem: str) -> tuple[str, int | None, str]:
             if _plausible_year(y) and _tidy(s[: m.start()]):
                 year, s, after = y, s[: m.start()], _tidy(s[m.end() :])
                 break
-    return _tidy(s), year, after
+    return Title(_tidy(s), year, after)
 
 
 def _plausible_year(y: int) -> bool:
     return 1900 <= y <= time.gmtime().tm_year + 1  # "Blade Runner 2049" is a title, not a year
 
 
-def episode_of(stem: str) -> tuple[str, int | None, str, str] | None:
-    """(show, season or None, episode digits, episode title) if the name has an
-    episode number, else None."""
+def episode_of(stem: str) -> Episode | None:
+    """The show, season, episode number and title if the name has an episode
+    number, else None."""
     s = BRACKETS.sub(" ", stem)
     s = PARENS.sub(lambda m: " " if JUNK.search(m.group(1)) else m.group(0), s)
     s = _spaced(s)
-    for strong, pat in zip((True, True, False, False), EPISODE_PATTERNS):
+    for strong, pat in EPISODE_PATTERNS:
         m = pat.match(s)
-        if not m:
+        if not m or (not strong and YEAR_IN_PARENS.search(m.group("rest"))):
             continue
-        if not strong and re.search(r"\((?:19|20)\d\d\)", m.group("rest")):
-            continue  # "Star Wars Episode 4 A New Hope (1977)": a movie
         show = _tidy(_cut_junk(m.group("show")))
         ep = m.group("ep")
         if not show or (len(ep) == 4 and YEAR.fullmatch(ep)):
@@ -177,8 +197,24 @@ def episode_of(stem: str) -> tuple[str, int | None, str, str] | None:
         rest = re.sub(r"\s*\((?:19|20)\d\d\)$", "", rest)
         if rest.count("(") != rest.count(")"):  # a group cut in half by _cut_junk
             rest = rest.replace("(", " ").replace(")", " ")
-        return show, int(season) if season else None, ep, _tidy(rest)
+        return Episode(show, int(season) if season else None, ep, _tidy(rest))
     return None
+
+
+def _review(share: str, name: str, reason: str, audio: str | None = None) -> Placement:
+    """Not certain: into the share's review folder under its own (safe) name."""
+    return Placement("review", share, "review", name, audio, reason)
+
+
+def _episode_name(ep: Episode) -> str:
+    """Show - 01 - Title, Show - S01E02 - Title, Show - 01 (Director's Cut)."""
+    num = ep.number.zfill(2)
+    name = f"{ep.show} - " + (f"S{ep.season:02d}E{num}" if ep.season is not None else num)
+    if ep.title.startswith("("):
+        return f"{name} {ep.title}"
+    if ep.title:
+        return f"{name} - {ep.title}"
+    return name
 
 
 def place(filename: str, tags: dict | None = None) -> Placement:
@@ -190,35 +226,20 @@ def place(filename: str, tags: dict | None = None) -> Placement:
     if kind == "audio":
         return _place_music(stem, ext, tags or {})
     if kind != "video":
-        return Placement("review", "movies", "review", safe_component(p), reason="not a video or audio file")
+        return _review("movies", safe_component(p), "not a video or audio file")
     audio = audio_hint(stem)
-    ep = episode_of(stem)
-    if ep:
-        show, season, num, title = ep
-        show = safe_component(show)
-        num = num.zfill(2)
-        mark = f"S{season:02d}E{num}" if season is not None else num
-        name = f"{show} - {mark}" + (f" {title}" if title.startswith("(") else f" - {title}" if title else "")
-        return Placement("show", "movies", f"library/{slug(show)}", safe_component(name) + ext, audio)
-    title, year, after = clean_title(stem)
-    if title and year and re.search(r"\d", after):  # "Birdy 1996 OVA 02": a part of something, not a film
-        return Placement(
-            "review",
-            "movies",
-            "review",
-            safe_component(stem) + ext,
-            audio,
-            reason="a number after the year: an episode or part, not sure which",
+    if ep := episode_of(stem):
+        ep = ep._replace(show=safe_component(ep.show))
+        return Placement("show", "movies", f"library/{slug(ep.show)}", safe_component(_episode_name(ep)) + ext, audio)
+    t = clean_title(stem)
+    if t.title and t.year and re.search(r"\d", t.after):  # "Birdy 1996 OVA 02": a part of something, not a film
+        return _review(
+            "movies", safe_component(stem) + ext, "a number after the year: an episode or part, not sure which", audio
         )
-    if title and year:
-        return Placement("movie", "movies", "library/movies", safe_component(f"{title} ({year})") + ext, audio)
-    return Placement(
-        "review",
-        "movies",
-        "review",
-        safe_component(stem) + ext,
-        audio,
-        reason="no episode number or year: can't tell a movie from a show",
+    if t.title and t.year:
+        return Placement("movie", "movies", "library/movies", safe_component(f"{t.title} ({t.year})") + ext, audio)
+    return _review(
+        "movies", safe_component(stem) + ext, "no episode number or year: can't tell a movie from a show", audio
     )
 
 
@@ -238,7 +259,7 @@ def _place_music(stem: str, ext: str, tags: dict) -> Placement:
     artist = _tag(tags, "albumartist") or _tag(tags, "artist")
     title = _tag(tags, "title")
     if not (artist and title):
-        return Placement("review", "music", "review", safe_component(stem) + ext, reason="no artist and title tags")
+        return _review("music", safe_component(stem) + ext, "no artist and title tags")
     album = _tag(tags, "album") or "Singles"
     track, disc = _number(_tag(tags, "tracknumber")), _number(_tag(tags, "discnumber"))
     discs = _number(_tag(tags, "discnumber").partition("/")[2])
@@ -251,7 +272,7 @@ def _place_music(stem: str, ext: str, tags: dict) -> Placement:
     )
 
 
-def unique_name(name: str, existing: set[str] | list[str]) -> str:
+def unique_name(name: str, existing: Iterable[str]) -> str:
     """name, or "name (2).ext", "name (3).ext"... so nothing is overwritten.
     Compared without case (exFAT ignores it), and two videos may not share a
     stem at all: their 480p copies would both be <stem>.mp4 (brick-k8s-config#112)."""

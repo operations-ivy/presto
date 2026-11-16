@@ -19,10 +19,12 @@ from __future__ import annotations
 import os
 import shutil
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 import brick_observe
+import mutagen
 from prometheus_client import Counter, Gauge
 
 from . import media
@@ -54,8 +56,9 @@ class Roots:
         """The share's folder is there, and on the same filesystem as movies (which
         the Deployment mounts as an existing Directory): a music folder kubelet made
         on brick2000's root disk while the drive was away doesn't count."""
+        root = self.of(share)
         try:
-            return self.of(share).is_dir() and self.of(share).stat().st_dev == self.movies.stat().st_dev
+            return root.is_dir() and root.stat().st_dev == self.movies.stat().st_dev
         except FileNotFoundError:
             return False
 
@@ -63,8 +66,6 @@ class Roots:
 def read_tags(path: Path) -> dict:
     """An audio file's tags (artist, album, title, tracknumber...), or {}."""
     try:
-        import mutagen
-
         f = mutagen.File(path, easy=True)
     except Exception:  # a broken or crafted file: no tags, so it goes to review
         log.warning("tags unreadable", file=path.name)
@@ -81,13 +82,13 @@ def copy_into(src: Path, folder: Path, name: str) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     final = folder / media.unique_name(name, [e.name for e in folder.iterdir()])
     part = folder / f".{final.name}.part"
-    with open(src, "rb") as i, open(part, "wb") as o:
-        shutil.copyfileobj(i, o, COPY_CHUNK)
-        o.flush()
-        os.fsync(o.fileno())
+    with src.open("rb") as fin, part.open("wb") as fout:
+        shutil.copyfileobj(fin, fout, COPY_CHUNK)
+        fout.flush()
+        os.fsync(fout.fileno())
     if final.exists():  # taken while we copied (a person on the share): pick again
         final = folder / media.unique_name(name, [e.name for e in folder.iterdir() if e != part])
-    os.rename(part, final)
+    part.rename(final)
     return final
 
 
@@ -96,6 +97,12 @@ class Sorter:
         self.inbox, self.roots = inbox, roots
         self.failed_at: dict[str, float] = {}
         self.indexed_at = 0.0
+
+    def _fail(self, up: str, kind: str, result: str, event: str, **fields) -> None:
+        """An upload that can't be filed now: counted, logged, retried after RETRY_S."""
+        self.failed_at[up] = time.time()
+        FILED.labels(kind, result).inc()
+        log.error(event, upload=up, **fields)
 
     def file_one(self, up: str) -> dict | None:
         """File one finished upload; returns its done record, or None if it waits."""
@@ -107,25 +114,19 @@ class Sorter:
         tags = read_tags(src) if media.media_kind(filename) == "audio" else {}
         place = media.place(filename, tags)
         if not self.roots.on_drive(place.share):
-            self.failed_at[up] = time.time()
-            FILED.labels(place.kind, "no_drive").inc()
-            log.error("media drive missing", share=place.share, upload=up)
+            self._fail(up, place.kind, "no_drive", "media drive missing", share=place.share)
             return None
         size = src.stat().st_size
         root = self.roots.of(place.share)
         if shutil.disk_usage(root).free - size < MIN_FREE:
-            self.failed_at[up] = time.time()
-            FILED.labels(place.kind, "no_space").inc()
-            log.error("media drive full", share=place.share, upload=up, bytes=size)
+            self._fail(up, place.kind, "no_space", "media drive full", share=place.share, bytes=size)
             return None
         started = time.perf_counter()
         with brick_observe.span("media file", **{"media.kind": place.kind, "media.bytes": size}):
             try:
                 final = copy_into(src, root / place.folder, place.name)
             except OSError as e:
-                self.failed_at[up] = time.time()
-                FILED.labels(place.kind, "error").inc()
-                log.error("media filing failed", upload=up, error=repr(e))
+                self._fail(up, place.kind, "error", "media filing failed", error=repr(e))
                 return None
         rel = final.relative_to(root).as_posix()
         done = {
@@ -156,12 +157,9 @@ class Sorter:
         return done
 
     def tick(self, now: float | None = None) -> int:
-        now = now or time.time()
-        filed = 0
+        now = time.time() if now is None else now
         pending = self.inbox.pending()
-        for up in pending:
-            if self.file_one(up):
-                filed += 1
+        filed = sum(1 for up in pending if self.file_one(up))
         self.inbox.sweep(now)
         if filed or now - self.indexed_at >= INDEX_S:
             index = build_index(self.roots, now)
@@ -174,8 +172,9 @@ class Sorter:
         return filed
 
 
-def _files(top: Path, exts: frozenset[str]):
-    """Every visible file under top with one of exts (no dotfiles, no dot folders)."""
+def _files(top: Path, exts: frozenset[str]) -> Iterator[Path]:
+    """Every visible file under top with one of exts (no dotfiles, no dot folders);
+    nothing if top isn't there (os.walk yields nothing)."""
     for dirpath, dirnames, filenames in os.walk(top):
         dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
         for fn in sorted(filenames):
@@ -197,7 +196,7 @@ def build_index(roots: Roots, now: float | None = None) -> dict:
     folder: a show), with its 480p copy if the converter has made one."""
     items = []
     lib, p480 = roots.movies / "library", roots.movies / "480p"
-    for f in _files(lib, media.VIDEO_EXT) if lib.is_dir() else ():
+    for f in _files(lib, media.VIDEO_EXT):
         entry = _stat(f, roots.movies)
         if not entry:
             continue
@@ -210,13 +209,12 @@ def build_index(roots: Roots, now: float | None = None) -> dict:
         if small:
             item["variants"] = {"480p": small}
         items.append(item)
-    music = roots.music / "library"
-    if roots.on_drive("music") and music.is_dir():
-        for f in _files(music, media.AUDIO_EXT):
+    if roots.on_drive("music"):
+        for f in _files(roots.music / "library", media.AUDIO_EXT):
             entry = _stat(f, roots.music)
             if entry:
                 items.append({"kind": "music", "share": "music", **entry})
-    return {"version": 1, "updated": int(now or time.time()), "items": items}
+    return {"version": 1, "updated": int(time.time() if now is None else now), "items": items}
 
 
 def run(inbox: Inbox, roots: Roots) -> None:

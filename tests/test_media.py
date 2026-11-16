@@ -1,5 +1,6 @@
 """The media importer (presto#39): naming, device tags, the inbox, the sorter, the API."""
 
+import contextlib
 import json
 import os
 import struct
@@ -8,15 +9,17 @@ import time
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
-from pathlib import Path
 
 import pytest
 
 pytest.importorskip("brick_observe")
+pytest.importorskip("mutagen")
+
+from mutagen.easyid3 import EasyID3  # noqa: E402
 
 from presto_photos import devices, media, sorter, web  # noqa: E402
 from presto_photos.__main__ import default_devices  # noqa: E402
-from presto_photos.inbox import Inbox  # noqa: E402
+from presto_photos.inbox import Inbox, valid_upload  # noqa: E402
 from presto_photos.store import Store  # noqa: E402
 
 
@@ -37,6 +40,7 @@ from presto_photos.store import Store  # noqa: E402
             "library/movies/Star Wars Episode 4 A New Hope (1977).mkv",
         ),
         ("Mission: Impossible (1996).MKV", "movie", "library/movies/Mission - Impossible (1996).mkv"),
+        ("Movie - 1999.mkv", "movie", "library/movies/Movie (1999).mkv"),  # a year, not episode 1999
         # shows: the anime cleanup's names, S01E02, 1x02, Ep 01
         (
             "Dragon Ball - 001 - Secret Of The DragonBall.mpg",
@@ -60,7 +64,6 @@ from presto_photos.store import Store  # noqa: E402
         # not certain: review, never guessed into the library
         ("Ninja_Scroll.mp4", "review", "review/Ninja_Scroll.mp4"),
         ("1984.mkv", "review", "review/1984.mkv"),
-        ("Movie - 1999.mkv", "movie", "library/movies/Movie (1999).mkv"),
         ("Blade Runner 2049.mkv", "review", "review/Blade Runner 2049.mkv"),
     ],
 )
@@ -169,23 +172,22 @@ def test_media_kind(name, kind):
 def item(kind="movie", path="library/movies/A (2000).mkv", audio=None, small=True):
     it = {
         "kind": kind,
-        "share": "movies" if kind != "music" else "music",
+        "share": "music" if kind == "music" else "movies",
         "path": path,
         "bytes": 100,
         "mtime": 1,
         "audio": audio,
     }
     if small and kind != "music":
-        it["variants"] = {
-            "480p": {"path": "480p/" + path.split("/", 1)[1].rsplit(".", 1)[0] + ".mp4", "bytes": 10, "mtime": 2}
-        }
+        stem = path.split("/", 1)[1].rsplit(".", 1)[0]
+        it["variants"] = {"480p": {"path": f"480p/{stem}.mp4", "bytes": 10, "mtime": 2}}
     return it
 
 
 def test_shipped_devices_yaml_is_valid():
     tags = devices.load(default_devices())
     assert set(tags) >= {"brick9000", "rg476h", "retroid", "presto"}
-    assert tags["retroid"].has("english_audio_only")
+    assert "english_audio_only" in tags["retroid"].tags
 
 
 @pytest.mark.parametrize(
@@ -203,7 +205,7 @@ def test_devices_yaml_mistakes(text, err):
 
 
 def test_variants_by_tags():
-    tags = devices.parse(default_devices().read_text())
+    tags = devices.load(default_devices())
     movie = item()
     assert devices.wants(tags["brick9000"], movie)["path"] == "library/movies/A (2000).mkv"
     assert devices.wants(tags["rg476h"], movie) == {
@@ -238,21 +240,20 @@ def test_manifest():
         "library/A/B/01 - C.flac",
     ]
     assert m["waiting_for_480p"] == 1 and m["bytes"] == 120 and m["generated"] == 9 and "photos" not in m
+    assert m["tags"] == ["handheld", "music"]
     p = devices.manifest(tags["p"], index)
     assert p["files"] == [] and p["photos"] == {"manifest": "/manifest.json", "size": 240}
 
 
 # --- the sorter --------------------------------------------------------------
-def mp3_bytes(**tags):
-    """A tiny real MP3 (silent MPEG-1 Layer III frames) with ID3 tags."""
-    from mutagen.easyid3 import EasyID3
-
-    frame = struct.pack(">I", 0xFFFB9004) + bytes(413)  # 128 kbps, 44.1 kHz, no padding: 417 bytes
-    return frame * 8, tags, EasyID3
+def mp3_bytes() -> bytes:
+    """A tiny real MP3: silent MPEG-1 Layer III frames (128 kbps, 44.1 kHz, 417 bytes each)."""
+    return (struct.pack(">I", 0xFFFB9004) + bytes(413)) * 8
 
 
 @pytest.fixture
-def drive(tmp_path):
+def drive(tmp_path, monkeypatch):
+    monkeypatch.setattr(sorter, "MIN_FREE", 0)
     movies, music = tmp_path / "extra" / "movies", tmp_path / "extra" / "music"
     (movies / "library" / "movies").mkdir(parents=True)
     music.mkdir(parents=True)
@@ -267,42 +268,62 @@ def queue(inbox, filename, data):
     return up
 
 
-def test_sorter_files_and_indexes(drive, monkeypatch):
+def test_sorter_never_overwrites(drive):
     inbox, roots = drive
-    monkeypatch.setattr(sorter, "MIN_FREE", 0)
-    (roots.movies / "library" / "movies" / "Akira (1988).mp4").write_bytes(b"old")
-    a = queue(inbox, "Akira.1988.1080p.mkv", b"new film")
-    b = queue(inbox, "Dragon Ball - 002 - The Emperor's Quest.avi", b"ep")
-    c = queue(inbox, "Ninja_Scroll.mp4", b"?")
-    assert sorter.Sorter(inbox, roots).tick() == 3
-    assert inbox.status(a)["path"] == "library/movies/Akira (1988) (2).mkv"  # the .mp4 is never overwritten
+    (roots.movies / "library/movies/Akira (1988).mp4").write_bytes(b"old")
+    up = queue(inbox, "Akira.1988.1080p.mkv", b"new film")
+    assert sorter.Sorter(inbox, roots).tick() == 1
+    assert inbox.status(up)["path"] == "library/movies/Akira (1988) (2).mkv"  # the .mp4 is kept
     assert (roots.movies / "library/movies/Akira (1988).mp4").read_bytes() == b"old"
+    assert (roots.movies / "library/movies/Akira (1988) (2).mkv").read_bytes() == b"new film"
+
+
+def test_sorter_files_shows_and_review(drive):
+    inbox, roots = drive
+    show = queue(inbox, "Dragon Ball - 002 - The Emperor's Quest.avi", b"ep")
+    unsure = queue(inbox, "Ninja_Scroll.mp4", b"?")
+    assert sorter.Sorter(inbox, roots).tick() == 2
+    assert inbox.status(show)["kind"] == "show"
     assert (roots.movies / "library/dragon-ball/Dragon Ball - 002 - The Emperor's Quest.avi").read_bytes() == b"ep"
-    assert inbox.status(c)["status"] == "review" and (roots.movies / "review/Ninja_Scroll.mp4").exists()
-    assert inbox.status(b)["kind"] == "show" and inbox.pending() == []
-    assert list(inbox.p("inbox").iterdir()) == []
+    assert inbox.status(unsure)["status"] == "review" and (roots.movies / "review/Ninja_Scroll.mp4").exists()
+
+
+def test_sorter_cleans_up(drive):
+    inbox, roots = drive
+    queue(inbox, "Akira (1988).mkv", b"x")
+    sorter.Sorter(inbox, roots).tick()
+    assert inbox.pending() == [] and list(inbox.p("inbox").iterdir()) == []
     assert not list(roots.movies.rglob(".*"))  # no .part left behind
-    # the 480p converter's copy shows up as the handhelds' variant
-    (roots.movies / "480p/dragon-ball").mkdir(parents=True)
-    (roots.movies / "480p/dragon-ball/Dragon Ball - 002 - The Emperor's Quest.mp4").write_bytes(b"s")
-    index = sorter.build_index(roots)
-    by_path = {i["path"]: i for i in index["items"]}
-    show = by_path["library/dragon-ball/Dragon Ball - 002 - The Emperor's Quest.avi"]
+
+
+def test_index_kinds_and_480p_variants(drive):
+    _, roots = drive
+    lib, small = roots.movies / "library", roots.movies / "480p"
+    (lib / "dragon-ball").mkdir()
+    (lib / "dragon-ball/Dragon Ball - 002 - Quest.avi").write_bytes(b"ep")
+    (lib / "movies/Akira (1988).mkv").write_bytes(b"film")
+    (lib / "Ninja_Scroll.mp4").write_bytes(b"top level: a movie")
+    (roots.movies / "review").mkdir()
+    (roots.movies / "review/Unsure.mp4").write_bytes(b"?")
+    (small / "dragon-ball").mkdir(parents=True)
+    (small / "dragon-ball/Dragon Ball - 002 - Quest.mp4").write_bytes(b"s")
+    by_path = {i["path"]: i for i in sorter.build_index(roots)["items"]}
+    show = by_path["library/dragon-ball/Dragon Ball - 002 - Quest.avi"]
     assert show["kind"] == "show" and show["series"] == "dragon-ball"
-    assert show["variants"]["480p"]["path"] == "480p/dragon-ball/Dragon Ball - 002 - The Emperor's Quest.mp4"
-    assert by_path["library/movies/Akira (1988) (2).mkv"]["kind"] == "movie"
+    assert show["variants"]["480p"]["path"] == "480p/dragon-ball/Dragon Ball - 002 - Quest.mp4"
+    assert by_path["library/movies/Akira (1988).mkv"]["kind"] == "movie"
+    assert "variants" not in by_path["library/movies/Akira (1988).mkv"]
+    assert by_path["library/Ninja_Scroll.mp4"]["kind"] == "movie"
     assert not any(p.startswith("review/") for p in by_path)  # review isn't in the library
 
 
-def test_sorter_reads_music_tags(drive, monkeypatch):
+def test_sorter_reads_music_tags(drive):
     inbox, roots = drive
-    monkeypatch.setattr(sorter, "MIN_FREE", 0)
-    data, tags, EasyID3 = mp3_bytes()
     tmp = inbox.root / "t.mp3"
-    tmp.write_bytes(data)
-    t = EasyID3()
-    t.update({"artist": "Daft Punk", "album": "Discovery", "title": "One More Time", "tracknumber": "1/14"})
-    t.save(tmp)
+    tmp.write_bytes(mp3_bytes())
+    tags = EasyID3()
+    tags.update({"artist": "Daft Punk", "album": "Discovery", "title": "One More Time", "tracknumber": "1/14"})
+    tags.save(tmp)
     up = queue(inbox, "01_track.mp3", tmp.read_bytes())
     sorter.Sorter(inbox, roots).tick()
     assert inbox.status(up)["path"] == "library/Daft Punk/Discovery/01 - One More Time.mp3"
@@ -310,25 +331,30 @@ def test_sorter_reads_music_tags(drive, monkeypatch):
     assert [(i["kind"], i["path"]) for i in items] == [("music", "library/Daft Punk/Discovery/01 - One More Time.mp3")]
 
 
-def test_sorter_waits_for_the_drive(drive, monkeypatch, tmp_path):
+def test_sorter_waits_for_the_drive(drive, tmp_path):
     inbox, roots = drive
-    monkeypatch.setattr(sorter, "MIN_FREE", 0)
-    gone = sorter.Roots(roots.movies, tmp_path / "nowhere")
     up = queue(inbox, "song.flac", b"x")
-    s = sorter.Sorter(inbox, gone)
-    assert s.tick() == 0 and inbox.pending() == [up]  # kept, not dropped
+    assert sorter.Sorter(inbox, sorter.Roots(roots.movies, tmp_path / "nowhere")).tick() == 0
+    assert inbox.pending() == [up]  # kept, not dropped
+
+
+def test_sorter_waits_for_space(drive, monkeypatch):
+    inbox, roots = drive
     monkeypatch.setattr(sorter, "MIN_FREE", 1 << 62)
-    v = queue(inbox, "Akira (1988).mkv", b"x")
-    assert sorter.Sorter(inbox, roots).tick() == 0 and v in inbox.pending()  # drive full: waits
+    up = queue(inbox, "Akira (1988).mkv", b"x")
+    assert sorter.Sorter(inbox, roots).tick() == 0 and inbox.pending() == [up]
 
 
 def test_sorter_retries_a_failed_copy(drive, monkeypatch):
     inbox, roots = drive
-    monkeypatch.setattr(sorter, "MIN_FREE", 0)
     up = queue(inbox, "Akira (1988).mkv", b"x")
     s = sorter.Sorter(inbox, roots)
     real = sorter.copy_into
-    monkeypatch.setattr(sorter, "copy_into", lambda *a: (_ for _ in ()).throw(OSError("I/O error")))
+
+    def boom(*a):
+        raise OSError("I/O error")
+
+    monkeypatch.setattr(sorter, "copy_into", boom)
     assert s.tick() == 0 and inbox.pending() == [up]
     monkeypatch.setattr(sorter, "copy_into", real)
     assert s.tick() == 0  # waits RETRY_S
@@ -345,21 +371,54 @@ def test_sweep(drive):
     assert inbox.sweep() == 1 and inbox.status(up) is None and inbox.recent() == []
 
 
+def test_a_bad_record_does_not_block_uploads(drive):
+    inbox, _ = drive
+    inbox.p("inbox", "a" * 32 + ".json").write_text('{"bytes": "lots"}')
+    inbox.p("inbox", "b" * 32 + ".json").write_text("[1, 2]")
+    inbox.begin({"filename": "a.mkv", "bytes": 10})
+    assert inbox.usage() == 10 and inbox.room_for(5)
+
+
+@pytest.mark.parametrize("up,ok", [("a" * 32, True), ("a" * 32 + "\n", False), ("A" * 32, False), ("../x", False)])
+def test_valid_upload(up, ok):
+    assert valid_upload(up) is ok
+
+
+def test_inbox_dir_is_shared_with_the_sorter(tmp_path):
+    Inbox(tmp_path, create=True)
+    assert (tmp_path / "inbox").stat().st_mode & 0o7777 == 0o2775
+
+
 # --- the API -----------------------------------------------------------------
+@contextlib.contextmanager
+def serve(handler):
+    """Serve handler on a free port; yields "host:port"."""
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        yield f"127.0.0.1:{httpd.server_address[1]}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 @pytest.fixture
 def site(tmp_path):
     store = Store(tmp_path / "photos", limit_bytes=50 << 20)
     inbox = Inbox(tmp_path / "media", limit_bytes=1 << 20, min_free_bytes=0, create=True)
     tags = devices.parse("devices:\n  retroid:\n    tags: [handheld, english_audio_only]\n")
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), web.make_handler(store, None, inbox, tags))
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    host = "127.0.0.1:%d" % httpd.server_address[1]
-    yield inbox, host
-    httpd.shutdown()
+    with serve(web.make_handler(store, None, inbox, tags)) as host:
+        yield inbox, host
+
+
+@pytest.fixture
+def bare_site(tmp_path):
+    with serve(web.make_handler(Store(tmp_path))) as host:
+        yield host
 
 
 def req(host, path, data=None, headers=None):
-    r = urllib.request.Request("http://" + host + path, data=data, headers=headers or {})
+    r = urllib.request.Request(f"http://{host}{path}", data=data, headers=headers or {})
     try:
         with urllib.request.urlopen(r, timeout=10) as resp:
             return resp.status, json.loads(resp.read() or b"null")
@@ -368,16 +427,12 @@ def req(host, path, data=None, headers=None):
 
 
 def page(host):
-    return {"X-Presto": "1", "Origin": "http://" + host}
+    return {"X-Presto": "1", "Origin": f"http://{host}"}
 
 
 def begin(host, filename, n):
-    return req(
-        host,
-        "/api/media/begin",
-        json.dumps({"filename": filename, "bytes": n, "type": "video/x-matroska"}).encode(),
-        page(host),
-    )
+    body = json.dumps({"filename": filename, "bytes": n, "type": "video/x-matroska"}).encode()
+    return req(host, "/api/media/begin", body, page(host))
 
 
 def test_chunked_upload_and_resume(site):
@@ -386,7 +441,10 @@ def test_chunked_upload_and_resume(site):
     code, b = begin(host, "Akira (1988).mkv", len(data))
     assert code == 201 and b["offset"] == 0
     up = b["upload"]
-    chunk = lambda off, body: req(host, f"/api/media/chunk?upload={up}&offset={off}", body, page(host))  # noqa: E731
+
+    def chunk(off, body):
+        return req(host, f"/api/media/chunk?upload={up}&offset={off}", body, page(host))
+
     assert chunk(0, data[:1000]) == (200, {"upload": up, "status": "receiving", "offset": 1000})
     # a retried chunk the server already has: told where it really is
     assert chunk(0, data[:1000]) == (409, {"error": "offset", "offset": 1000})
@@ -398,7 +456,7 @@ def test_chunked_upload_and_resume(site):
 
 
 def test_media_upload_guards(site):
-    inbox, host = site
+    _, host = site
     assert req(host, "/api/media/begin", b'{"filename": "a.mkv", "bytes": 5}')[0] == 403  # not from the page
     assert begin(host, "a.jpg", 5)[0] == 415  # photos: the photo flow
     assert begin(host, "a.exe", 5)[0] == 415
@@ -406,7 +464,7 @@ def test_media_upload_guards(site):
     assert begin(host, "a.mkv", 0)[0] == 400
     assert req(host, "/api/media/chunk?upload=../../x&offset=0", b"x", page(host))[0] == 404
     assert req(host, "/api/media/status?upload=nope")[0] == 404
-    _, b = begin(host, "a.mkv", 600 << 10)
+    assert begin(host, "a.mkv", 600 << 10)[0] == 201
     assert begin(host, "b.mkv", 600 << 10)[0] == 507  # the first one's size is promised already
 
 
@@ -418,28 +476,17 @@ def test_sync_api(site):
     code, m = req(host, "/api/media/sync?device=retroid")
     assert code == 200 and [f["path"] for f in m["files"]] == ["480p/movies/A (2000).mp4"] and m["index_updated"] == 7
     assert req(host, "/api/media/sync?device=nope") == (404, {"error": "no such device", "devices": ["retroid"]})
-    code, d = req(host, "/api/media/devices")
-    assert d["devices"] == [{"name": "retroid", "tags": ["handheld", "english_audio_only"], "note": ""}]
+    _, d = req(host, "/api/media/devices")
+    assert d["devices"] == [{"name": "retroid", "tags": ["english_audio_only", "handheld"], "note": ""}]
     assert "photos_240" in d["vocabulary"]
     inbox.record("a" * 32, {"status": "filed", "kind": "movie", "path": "library/movies/A (2000).mkv", "at": 5})
-    code, r = req(host, "/api/media/recent")
+    _, r = req(host, "/api/media/recent")
     assert r["recent"][0]["path"] == "library/movies/A (2000).mkv" and r["limit"] == 1 << 20
 
 
-def test_no_inbox_no_media(tmp_path):
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), web.make_handler(Store(tmp_path)))
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    host = "127.0.0.1:%d" % httpd.server_address[1]
-    try:
-        assert req(host, "/api/media/recent")[0] == 404
-        assert begin(host, "a.mkv", 5)[0] == 404
-    finally:
-        httpd.shutdown()
-
-
-def test_inbox_dir_is_shared_with_the_sorter(tmp_path):
-    Inbox(tmp_path, create=True)
-    assert (Path(tmp_path) / "inbox").stat().st_mode & 0o7777 == 0o2775
+def test_no_inbox_no_media(bare_site):
+    assert req(bare_site, "/api/media/recent")[0] == 404
+    assert begin(bare_site, "a.mkv", 5)[0] == 404
 
 
 @pytest.mark.parametrize(

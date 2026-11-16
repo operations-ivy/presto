@@ -62,19 +62,23 @@ CHUNK = 16 << 20  # what the page sends per request: ~10 s on slow Wi-Fi, well i
 MAX_CHUNK = 64 << 20
 MEDIA_UPLOADS = Counter("media_uploads_total", "Media uploads, by kind and result", ["kind", "result"])
 SYNCS = Counter("media_sync_requests_total", "Sync manifests served, by device", ["device"])
+READ_CHUNK = 1 << 20  # request bodies are copied to disk this much at a time
 PHOTO_FILE = re.compile(r"^/photo/([0-9a-f]{16})\.(jpg|rgb565)$")
+SHOWING_FOR_S = 30 * 60  # a report older than this: the Presto isn't on Photos (or is off)
+# (User-Agent fragment, the name we show), first match wins
+_DEVICE_KEYS = (
+    ("iPhone", "iPhone"),
+    ("iPad", "iPad"),
+    ("Android", "Android"),
+    ("Macintosh", "Mac"),
+    ("Windows", "Windows"),
+    ("Linux", "Linux"),
+)
 
 
 def device_of(ua: str) -> str:
     """A short, human name for the uploading device, from its User-Agent."""
-    for key, name in (
-        ("iPhone", "iPhone"),
-        ("iPad", "iPad"),
-        ("Android", "Android"),
-        ("Macintosh", "Mac"),
-        ("Windows", "Windows"),
-        ("Linux", "Linux"),
-    ):
+    for key, name in _DEVICE_KEYS:
         if key in ua:
             return name
     return "unknown"
@@ -84,9 +88,6 @@ def same_origin(origin: str | None, host: str | None) -> bool:
     if not origin or not host:
         return False
     return origin in (f"https://{host}", f"http://{host}")
-
-
-SHOWING_FOR_S = 30 * 60  # a report older than this: the Presto isn't on Photos (or is off)
 
 
 def make_handler(
@@ -161,11 +162,35 @@ def make_handler(
         def query(self, key: str) -> str:
             return (parse_qs(urlsplit(self.path).query).get(key) or [""])[0]
 
-        def query_id(self):
-            pid = (parse_qs(urlsplit(self.path).query).get("id") or [""])[0]
+        def query_id(self) -> str | None:
+            pid = self.query("id")
             return pid if valid_id(pid) else None
 
-        def body_json(self, limit=4096):
+        def client_ip(self) -> str:
+            return (self.headers.get("X-Forwarded-For") or self.client_address[0]).split(",")[0].strip()
+
+        def origin_info(self, **extra) -> dict:
+            """Who sent an upload, for its record: the device, the address, when."""
+            return {
+                **extra,
+                "device": device_of(self.headers.get("User-Agent", "")),
+                "from": self.client_ip(),
+                "received": int(time.time()),
+            }
+
+        def _read_body_to(self, f, n: int) -> int:
+            """Copy the next n bytes of the body into f, READ_CHUNK at a time;
+            returns how many didn't arrive (0: all of them)."""
+            left = n
+            while left:
+                chunk = self.rfile.read(min(left, READ_CHUNK))
+                if not chunk:
+                    break
+                f.write(chunk)
+                left -= len(chunk)
+            return left
+
+        def body_json(self, limit=4096) -> dict:
             n = int(self.headers.get("Content-Length") or 0)
             if n > limit:
                 raise ValueError("body too large")
@@ -260,7 +285,7 @@ def make_handler(
                 if (
                     not isinstance(crop, list)
                     or len(crop) != 3
-                    or not all(isinstance(v, (int, float)) and 0 <= v <= 1 for v in crop)
+                    or not all(isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v <= 1 for v in crop)
                 ):
                     return self.json(400, {"error": "crop is [cx, cy, size], each 0..1"})
                 if m.get("status") not in ("ready", "recrop"):
@@ -298,27 +323,17 @@ def make_handler(
                 return self.json(507, {"error": "the photo store is full: delete some photos first"})
             up = store.begin_upload()
             part = store.upload_part(up)
-            left = n
-            with open(part, "wb") as f:
-                while left:
-                    chunk = self.rfile.read(min(left, 1 << 20))
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    left -= len(chunk)
+            with part.open("wb") as f:
+                left = self._read_body_to(f, n)
             if left:
                 part.unlink(missing_ok=True)
                 UPLOADS.labels("cut_short").inc()
                 return self.json(400, {"error": "upload cut short"})
-            ua = self.headers.get("User-Agent", "")
-            info = {
-                "filename": (self.headers.get("X-Filename") or "photo")[:200],
-                "content_type": (self.headers.get("Content-Type") or "")[:100],
-                "bytes": n,
-                "device": device_of(ua),
-                "from": (self.headers.get("X-Forwarded-For") or self.client_address[0]).split(",")[0].strip(),
-                "received": int(time.time()),
-            }
+            info = self.origin_info(
+                filename=(self.headers.get("X-Filename") or "photo")[:200],
+                content_type=(self.headers.get("Content-Type") or "")[:100],
+                bytes=n,
+            )
             store.finish_upload(up, info)
             UPLOADS.labels("ok").inc()
             log.info("upload received", upload=up, bytes=n, device=info["device"], content_type=info["content_type"])
@@ -346,7 +361,7 @@ def make_handler(
                 return self.json(
                     200,
                     {
-                        "devices": [{"name": d.name, "tags": list(d.tags), "note": d.note} for d in devices.values()],
+                        "devices": [{"name": d.name, "tags": sorted(d.tags), "note": d.note} for d in devices.values()],
                         "vocabulary": media_devices.VOCABULARY,
                     },
                 )
@@ -380,15 +395,9 @@ def make_handler(
             if not inbox.room_for(n):
                 MEDIA_UPLOADS.labels(kind, "full").inc()
                 return self.json(507, {"error": "the media inbox is full: try again once the sorter catches up"})
-            info = {
-                "filename": filename,
-                "content_type": str(body.get("type") or "")[:100],
-                "bytes": n,
-                "kind": kind,
-                "device": device_of(self.headers.get("User-Agent", "")),
-                "from": (self.headers.get("X-Forwarded-For") or self.client_address[0]).split(",")[0].strip(),
-                "received": int(time.time()),
-            }
+            info = self.origin_info(
+                filename=filename, content_type=str(body.get("type") or "")[:100], bytes=n, kind=kind
+            )
             up = inbox.begin(info)
             log.info("media upload started", upload=up, kind=kind, bytes=n, device=info["device"])
             self.json(201, {"upload": up, "chunk": CHUNK, "offset": 0})
@@ -412,18 +421,14 @@ def make_handler(
                 have = inbox.received(up)
                 if have is None:  # complete already, or swept
                     st = inbox.status(up)
-                    return self.json(409 if not st else 200, st or {"error": "upload gone"})
+                    if st is None:
+                        return self.json(409, {"error": "upload gone"})
+                    return self.json(200, st)
                 if have != offset:
                     MEDIA_UPLOADS.labels(kind, "resumed").inc()
                     return self.json(409, {"error": "offset", "offset": have})
-                left = n
-                with open(inbox.part(up), "ab") as f:
-                    while left:
-                        chunk = self.rfile.read(min(left, 1 << 20))
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        left -= len(chunk)
+                with inbox.part(up).open("ab") as f:
+                    left = self._read_body_to(f, n)
                 if left:  # cut short: keep what came, the page resumes from it
                     return self.json(400, {"error": "chunk cut short", "offset": inbox.received(up)})
                 have += n

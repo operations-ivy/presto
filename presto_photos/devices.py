@@ -39,16 +39,22 @@ PLAYS_VIDEO = frozenset({"handheld", "medium_graphics", "high_graphics"})
 SMALL_SCREEN = frozenset({"handheld", "640x480"})
 NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 VIDEO_KINDS = ("movie", "show")
+WAITING = "waiting"  # wants() for a small screen whose 480p copy isn't made yet
 
 
 @dataclass(frozen=True)
 class Device:
     name: str
-    tags: tuple[str, ...]
+    tags: frozenset[str]
     note: str = ""
 
-    def has(self, *tags: str) -> bool:
-        return any(t in self.tags for t in tags)
+    @property
+    def plays_video(self) -> bool:
+        return not self.tags.isdisjoint(PLAYS_VIDEO)
+
+    @property
+    def small_screen(self) -> bool:
+        return not self.tags.isdisjoint(SMALL_SCREEN)
 
 
 def parse(text: str) -> dict[str, Device]:
@@ -64,21 +70,18 @@ def parse(text: str) -> dict[str, Device]:
         if not NAME.match(name):
             raise ValueError(f"device name {name!r}: lowercase letters, digits, - and _ only")
         spec = spec or {}
-        tags = spec.get("tags") or []
-        if not isinstance(tags, list):
+        raw_tags = spec.get("tags") or []
+        if not isinstance(raw_tags, list):
             raise ValueError(f"{name}: tags must be a list")
-        unknown = [str(t) for t in tags if str(t) not in VOCABULARY]
-        if unknown:
+        tags = frozenset(str(t) for t in raw_tags)
+        if unknown := sorted(tags - VOCABULARY.keys()):
             raise ValueError(f"{name}: unknown tags {unknown}; known: {sorted(VOCABULARY)}")
-        out[name] = Device(name, tuple(str(t) for t in tags), str(spec.get("note") or ""))
+        out[name] = Device(name, tags, str(spec.get("note") or ""))
     return out
 
 
-def load(path: Path) -> dict[str, Device]:
+def load(path: str | Path) -> dict[str, Device]:
     return parse(Path(path).read_text())
-
-
-WAITING = "waiting"  # wants() for a small screen whose 480p copy isn't made yet
 
 
 def wants(dev: Device, item: dict) -> dict | str | None:
@@ -86,15 +89,15 @@ def wants(dev: Device, item: dict) -> dict | str | None:
     or WAITING: a small screen whose 480p copy isn't made yet gets it later."""
     kind = item.get("kind")
     if kind in VIDEO_KINDS:
-        if not dev.has(*PLAYS_VIDEO):
+        if not dev.plays_video:
             return None
-        if dev.has("english_audio_only") and item.get("audio") == "sub":
+        if "english_audio_only" in dev.tags and item.get("audio") == "sub":
             return None
-        if dev.has(*SMALL_SCREEN):
+        if dev.small_screen:
             v = (item.get("variants") or {}).get("480p")
             return {**_entry(item, v), "variant": "480p"} if v else WAITING
         return {**_entry(item, item), "variant": "original"}
-    if kind == "music" and dev.has("music"):
+    if kind == "music" and "music" in dev.tags:
         return {**_entry(item, item), "variant": "original"}
     return None
 
@@ -116,13 +119,13 @@ def manifest(dev: Device, index: dict, now: float | None = None) -> dict:
     out = {
         "version": 1,
         "device": dev.name,
-        "tags": list(dev.tags),
-        "generated": int(now or time.time()),
+        "tags": sorted(dev.tags),
+        "generated": int(time.time() if now is None else now),
         "index_updated": index.get("updated"),
         "files": files,
         "bytes": sum(f["bytes"] for f in files),
         "waiting_for_480p": waiting,
     }
-    if dev.has("photos_240"):
+    if "photos_240" in dev.tags:
         out["photos"] = {"manifest": "/manifest.json", "size": 240}
     return out
