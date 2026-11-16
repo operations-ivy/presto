@@ -83,7 +83,11 @@ art in `device/lib/neon/sprites.py`, like brick-status's `tools/pixel_art.py`).
 | `device/settings.yaml` | settings (flat `key: value`; read by `neon/conf.py`) |
 | `tools/deploy` | copy `device/` to the Presto over USB and restart it |
 | `tools/presto-photos` | iPhone HEIC/JPEG to 480x480 baseline sRGB JPEGs (the pipeline's first draft) |
-| `tests/` | pytest for the pure modules |
+| `presto_photos/` | the cluster side: upload page (`web.py`), photo converter (`worker.py`), media sorter (`sorter.py`), presto-feed |
+| `presto_photos/media.py` | media kinds and clean names (pure) |
+| `presto_photos/devices.py` | device tags and each device's sync manifest (pure) |
+| `k8s_config/` | the `presto` namespace for Argo CD; `devices.yaml` is the media device tags |
+| `tests/` | pytest for the pure modules and the services |
 
 ## On the device
 
@@ -123,6 +127,82 @@ Things that have bitten (details in homelab-context `docs/hosts.md`):
   unplug the app's retry (`neon/retry.py`) has it back in ~20-30 s.
 - **Speed** (full_res): a full clear is 45 ms and a full update 24 ms, so a
   full repaint runs at about 10 fps; Home measures 9-10 fps.
+
+## Media importer (presto#39)
+
+The upload page (presto.brick.nozdormu.cloud) takes audio and video as well as
+photos. Photos go through the photo converter as before. Audio and video go
+to their own volume, the media inbox (`presto-media-inbox`, 20 GB for all
+uploads together, 20 GB a file), in 16 MB chunks: a film is many short
+requests, each well inside the proxies' timeouts, and a dropped connection
+resumes where it stopped. The sorter (`presto-media-sort`) then files each
+one on brick2000's media drive and the page shows where it went.
+
+### Kinds and names
+
+| Kind | When | Where (on the drive) |
+| --- | --- | --- |
+| show | a video with an episode number: `S01E02`, `1x02`, `Show - 01`, `Show Ep 01`, `Episode 01` | `/extra/movies/library/<series-slug>/Show - 01 - Title.ext` (`Show - S01E02 - Title.ext` with a season) |
+| movie | a video with a year: `Title (1988)`, `Title.1988.1080p...` | `/extra/movies/library/movies/Title (Year).ext` |
+| music | audio with artist and title tags (mutagen) | `/extra/music/library/<Artist>/<Album>/NN - Title.ext` (`D-NN` on multi-disc albums; `Singles` without an album; album artist first) |
+| review | anything else: no episode number and no year, a number after the year (`Birdy 1996 OVA 02`), audio without tags | `/extra/movies/review/` or `/extra/music/review/`, under its own name |
+| photo | `.heic .heif .jpg .jpeg .png` | the photo store, as before |
+
+Names follow the anime cleanup (2026-11-14). Release noise goes: `[Group]`
+and `[hash]` tags, and everything from the first release token (`1080p`,
+`x264`, `BluRay`, `WEB-DL`, `AAC`...); underscores, and dots in names without
+spaces, become spaces. Characters exFAT or Samba refuse go (`:` becomes ` - `),
+as do leading dots (the 480p converter skips dotfiles). Nothing is ever
+overwritten: a taken name gets ` (2)`, without regard to case (exFAT ignores
+it), and two videos never share a name with different extensions (their 480p
+copies would both be `<name>.mp4`: brick-k8s-config#112). A copy lands as a
+dotted `.part` and is renamed when complete, so the 480p converter never sees
+half a file. Videos in the library get their 480p copy from brick-k8s-config's
+`movies-480p` CronJob as before; review doesn't.
+
+A video's `audio` is `dub` or `sub` when its name says so (`[English Dub]`,
+`[Eng Sub]`, `subbed`), else unknown (`null`).
+
+### Device tags
+
+`k8s_config/devices.yaml` (the `presto-media-devices` ConfigMap; the image
+carries a copy) tags each device. An unknown tag stops the page from starting.
+
+| Tag | Means |
+| --- | --- |
+| `handheld` | plays video on a small screen: movies and shows, as the 480p copies |
+| `640x480` | a 640x480 screen: the 480p copies |
+| `medium_graphics` | plays video: movies and shows, originals |
+| `high_graphics` | plays video at full size: originals (unless also `handheld`) |
+| `english_audio_only` | skips videos known to be subtitled-only (`audio: sub`) |
+| `music` | the music library |
+| `photos_240` | the Presto's 240x240 photo frames (its own `/manifest.json`) |
+| `pi4` | a Raspberry Pi 4; descriptive, no rule |
+
+A small screen gets a video once its 480p copy exists (`waiting_for_480p`
+counts the rest).
+
+### API
+
+| Call | Answers |
+| --- | --- |
+| `POST /api/media/begin` `{"filename", "bytes", "type"}` | `{"upload", "chunk", "offset": 0}`; 415 for anything but audio and video, 413 over 20 GB, 507 when the inbox is full |
+| `POST /api/media/chunk?upload=&offset=` (raw body) | `{"offset"}`; 202 when complete; 409 `{"offset"}` when the server has a different count (resume from it) |
+| `GET /api/media/status?upload=` | `receiving` (offset), `queued`, or the sorter's record: `filed`/`review`, kind, share, path |
+| `GET /api/media/recent` | the last uploads filed, the inbox's usage and cap |
+| `GET /api/media/devices` | every device, its tags, the tag vocabulary |
+| `GET /api/media/sync?device=<name>` | the device's manifest: each file's `kind`, `share`, `path`, `bytes`, `mtime`, `variant` |
+
+POSTs need the page's guard (same Origin and `X-Presto: 1`), like the photo
+calls. A manifest's paths are relative to a Samba share's root: `movies` is
+`/extra/movies` (`library/...` or `480p/...`), `music` is `/extra/music`. A
+device pulls what it lacks or what changed (size, mtime) and removes what's
+no longer listed. The sorter rebuilds the index (`library.json` in the inbox)
+every 5 minutes and after each filing, so files added over Samba show up too.
+
+Metrics: `media_uploads_total{kind,result}`, `media_sync_requests_total{device}`
+(page); `media_filed_total{kind,result}`, `media_library_files{kind}`,
+`media_inbox_waiting`, `media_inbox_bytes` (sorter).
 
 ## Development
 

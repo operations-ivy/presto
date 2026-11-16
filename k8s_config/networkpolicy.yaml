@@ -60,6 +60,29 @@ spec:
     ports:
     - port: 8080
 ---
+# The media sorter, the same: nothing in but Prometheus' scrape (and out, only
+# DNS and traces, below). It reads tags from files anyone on the LAN can upload.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sort-ingress
+  namespace: presto
+spec:
+  podSelector:
+    matchLabels:
+      app: presto-media-sort
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+    ports:
+    - port: 8080
+---
 # The feed: from Traefik (GET /brick.json) and Prometheus' scrape.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

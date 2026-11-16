@@ -1,0 +1,20 @@
+# The media inbox (presto_photos/inbox.py): audio and video uploads, arriving
+# in chunks, until the sorter (sort-deployment.yaml) files them on the media
+# drive. The page caps it at MEDIA_LIMIT_GB (20) for all uploads together and
+# keeps MEDIA_MIN_FREE_GB (50) free on brick2000's NVMe; local-path doesn't
+# enforce the size below. It holds uploads in flight and the library index,
+# nothing that isn't also elsewhere, but an upload waiting for a full drive
+# lives only here: Argo CD never prunes or deletes it either.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: presto-media-inbox
+  namespace: presto
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 25Gi
