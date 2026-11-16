@@ -1,5 +1,6 @@
 # The upload page and the Presto's files. It never decodes an image (the
-# converter does, sandboxed), so it stays small.
+# converter does, sandboxed), so it stays small. Media uploads (audio, video)
+# go to their own volume, the media inbox, in chunks; the sorter files them.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -58,9 +59,22 @@ spec:
           value: /data
         - name: PHOTOS_LIMIT_GB
           value: "5"
+        - name: MEDIA_ROOT
+          value: /media
+        - name: MEDIA_LIMIT_GB
+          value: "20"
+        - name: MEDIA_MIN_FREE_GB
+          value: "50"
+        - name: MEDIA_DEVICES
+          value: /config/devices.yaml
         volumeMounts:
         - name: photos
           mountPath: /data
+        - name: media
+          mountPath: /media
+        - name: devices
+          mountPath: /config
+          readOnly: true
         - name: tmp
           mountPath: /tmp
         securityContext:
@@ -91,6 +105,12 @@ spec:
       - name: photos
         persistentVolumeClaim:
           claimName: presto-photos
+      - name: media
+        persistentVolumeClaim:
+          claimName: presto-media-inbox
+      - name: devices
+        configMap:
+          name: presto-media-devices
       # The root is read-only; a library wanting scratch space gets a small tmpfs.
       - name: tmp
         emptyDir:

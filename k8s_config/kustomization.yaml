@@ -11,15 +11,25 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - pvc.yaml
+  - media-inbox-pvc.yaml
   - networkpolicy.yaml
   - web-deployment.yaml
   - web-service.yaml
   - ingress.yaml
   - convert-deployment.yaml
+  - sort-deployment.yaml
   - feed-deployment.yaml
   - feed-service.yaml
   - podmonitor.yaml
   - dashboard-web.yaml
+
+# Media device tags (presto#39): the page's server reads them for the sync
+# API. The name gets a hash of the contents, so a change rolls the page.
+configMapGenerator:
+  - name: presto-media-devices
+    namespace: presto
+    files:
+      - devices.yaml
 
 images:
   - name: whitepatrick/presto-photos
