@@ -50,8 +50,13 @@ chimes with a bell envelope at `chirp_volume`.
   colour), the bar sets the level, the scene keys load BRT, RLX, HAX (phosphor
   green: ACCESS GRANTED) and NITE. Every command shows the bytes it sent and
   Home Assistant's answer with its round trip; the readout decrypts into place
-  when the light changes. `lights` in settings lists them (tap the readout to
-  cycle). It talks to `ha_url` (plain HTTP on the LAN: a TLS connect stalls the
+  when the light changes. `lights` in settings lists them, each with its name
+  (`light.lamp=office, light.lamp2=bedroom, light.living_room_lamp3=living
+  room`). The readout's top line is the one the keys act on and its place
+  (`OFFICE 1/3`); tap the readout for the next. **One light at a time, never in
+  sync** (the user, 2026-11-19): every command names exactly one configured
+  light, and `hue.send` refuses a list, a group, `all` or a light not in
+  settings. The app opens on the first light (office) each time. It talks to `ha_url` (plain HTTP on the LAN: a TLS connect stalls the
   Presto ~3 s) as Home Assistant's Presto user, `HA_TOKEN` in `secrets.py`.
   (The old SIGNAL LOST screen is still `fun`.)
 - **Transitions**: TV static. The old screen breaks up into noise bars and

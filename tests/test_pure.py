@@ -1,10 +1,14 @@
 import calendar
 import datetime as dt
 import errno
+import json
 import types
+from pathlib import Path
 
 import pytest
 from neon import card, conf, hue, nav, photosync, retry, sightings, sprites, tz, uplink, wx
+
+SETTINGS = Path(__file__).resolve().parents[1] / "device" / "settings.yaml"
 
 
 # --- tz ------------------------------------------------------------------
@@ -117,12 +121,9 @@ def test_conf_rejects_nesting():
 
 
 def test_repo_settings_parse():
-    from pathlib import Path
-
-    text = (Path(__file__).resolve().parents[1] / "device" / "settings.yaml").read_text()
-    s = conf.parse(text)
+    s = conf.parse(SETTINGS.read_text())
     assert s["arm_left"] == "photos" and s["utc_offset"] == -5 and s["dst"] == "us"
-    assert s["arm_down"] == "lights" and s["lights"] == "light.lamp"
+    assert s["arm_down"] == "lights" and s["lights"].startswith("light.lamp=office")
 
 
 # --- wx ------------------------------------------------------------------
@@ -820,3 +821,66 @@ def test_hue_marks_a_light_unavailable_when_home_assistant_refuses():
     )
     run_hue(h, 60)
     assert "light.lamp" in h.lights and h.lights["light.lamp"] is None
+
+
+# --- one light at a time, never in sync (the user, 2026-11-19) ------------------
+THREE = ["light.lamp", "light.lamp2", "light.living_room_lamp3"]
+
+
+@pytest.mark.parametrize("text,want", [
+    ("light.lamp=office, light.lamp2 = bedroom,light.living_room_lamp3=living room",
+     (THREE, {"light.lamp": "office", "light.lamp2": "bedroom", "light.living_room_lamp3": "living room"})),
+    ("light.lamp", (["light.lamp"], {})),
+    (None, ([], {})),
+])
+def test_parse_lights_names_and_order(text, want):
+    assert hue.parse_lights(text) == want
+
+
+def test_the_presto_settings_list_the_three_lights_by_room():
+    entities, names = hue.parse_lights(conf.parse(SETTINGS.read_text())["lights"])
+    assert entities == THREE
+    assert [names[e] for e in entities] == ["office", "bedroom", "living room"]
+
+
+def test_each_command_names_exactly_one_light():
+    h = hue.Hue("http://brick2000:8123", "tok", THREE)
+    for e in THREE:
+        assert h.send("turn_on", e, {"brightness_pct": 40})
+    assert [json.loads(c[2])["entity_id"] for c in h.calls] == THREE  # one call per light, each its own
+
+
+@pytest.mark.parametrize("target", [
+    pytest.param(THREE, id="a-list"),
+    pytest.param("light.lamp,light.lamp2", id="a-comma-list"),
+    pytest.param("all", id="all"),
+    pytest.param("light.kitchen", id="not-ours"),
+    pytest.param(None, id="none"),
+])
+def test_anything_but_one_of_our_lights_is_refused(target):
+    h = hue.Hue("http://brick2000:8123", "tok", THREE)
+    assert h.send("toggle", target) is False
+    assert not h.calls and not h.busy
+    assert h.last[0] is False and h.seq == 1
+
+
+def test_a_group_is_refused_once_its_state_says_so():
+    h = hue.Hue("http://brick2000:8123", "tok", ["light.living_room"])
+    h.lights["light.living_room"] = hue.parse_state("light.living_room", {
+        "state": "on", "attributes": {"entity_id": ["light.lamp", "light.lamp2"], "friendly_name": "Living room"}})
+    assert h.send("turn_on", "light.living_room") is False and not h.calls
+
+
+def test_data_cannot_aim_a_command_elsewhere():
+    h = hue.Hue("http://brick2000:8123", "tok", THREE)
+    h.send("turn_on", "light.lamp", {"entity_id": THREE, "area_id": "bedroom", "brightness_pct": 5})
+    assert json.loads(h.calls[0][2]) == {"entity_id": "light.lamp", "brightness_pct": 5}
+
+
+def test_a_light_goes_by_its_settings_name():
+    h = hue.Hue("http://brick2000:8123", "tok", THREE, names={"light.lamp": "office"})
+    h.lights["light.living_room_lamp3"] = hue.parse_state("light.living_room_lamp3", {
+        "state": "off", "attributes": {"friendly_name": "Hue lamp 3"}})
+    assert h.name("light.lamp") == "office"
+    assert h.name("light.living_room_lamp3") == "Hue lamp 3"
+    assert h.name("light.lamp2") == "light.lamp2"  # not known yet

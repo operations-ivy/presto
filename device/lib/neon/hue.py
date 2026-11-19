@@ -7,6 +7,11 @@ connect of the cluster's front door.
 The lamp is a Bluetooth bulb Home Assistant drives through brick2000's radio, so a
 command can take a second or so.
 
+One light at a time, always (the user, 2026-11-19: the bulbs are set one by one and
+NEVER in sync from the Presto): every command names exactly one of the configured
+lights, never a list, a group (a light.* with members) or "all", and send() refuses
+anything else. The app shows which light its keys act on and cycles them with a tap.
+
 The Presto's back LEDs follow one of them (settings: leds_light): its colour, bright,
 since they face away from the user; off with it. The pure parts (parse_state,
 led_colour, bar, hexline, the scenes) are tested on the laptop; Hue does the I/O.
@@ -44,6 +49,24 @@ def scene_on(light, data):
     return True
 
 
+# Keys in a command's data that would aim it somewhere else than its one light.
+TARGET_KEYS = ("entity_id", "area_id", "device_id", "floor_id", "label_id")
+
+
+def parse_lights(text):
+    """settings' lights -> ([entity, ...], {entity: name}): comma-separated entities,
+    each with an optional name after "=" (light.lamp=office)."""
+    entities, names = [], {}
+    for item in str(text or "").split(","):
+        entity, _, name = item.partition("=")
+        entity, name = entity.strip(), name.strip()
+        if entity:
+            entities.append(entity)
+            if name:
+                names[entity] = name
+    return entities, names
+
+
 def parse_state(entity, js):
     """Home Assistant's /api/states/<entity> -> {entity, name, on, bri 0..1, rgb, kelvin},
     or None when it's unavailable."""
@@ -61,6 +84,7 @@ def parse_state(entity, js):
         "rgb": tuple(int(c) for c in rgb) if on and rgb and len(rgb) == 3 else None,
         "kelvin": a.get("color_temp_kelvin") if on else None,
         "mode": a.get("color_mode"),
+        "group": bool(a.get("entity_id") or a.get("is_hue_group")),  # a room or group: never sent to
     }
 
 
@@ -164,10 +188,11 @@ class Hue:
     """The lights' state (polled while something wants it) and commands to them, one
     request at a time, each stepped between frames (Exchange); commands go first."""
 
-    def __init__(self, url, token, entities, sockets=None):
+    def __init__(self, url, token, entities, sockets=None, names=None):
         self.url = url or ""
         self.token = token or ""
         self.entities = [e for e in entities if e]
+        self.names = names or {}  # entity -> the name the app shows (settings: lights)
         self.lights = {}  # entity -> parse_state(), or None while unavailable
         self.next_at = None  # poll at the first step
         self.addr = None  # resolved once: the router's DNS is slow
@@ -197,11 +222,34 @@ class Hue:
         light = self.lights.get(entity)
         return None if light is None else led_colour(light, floor)
 
+    def name(self, entity):
+        """What the app calls a light: its name in settings, else Home Assistant's."""
+        light = self.lights.get(entity)
+        return self.names.get(entity) or (light["name"] if light else entity)
+
+    def one_light(self, entity):
+        """Whether entity is one of our lights, alone: a configured light.* that isn't a
+        group (module docstring)."""
+        # `not in self.entities` alone rejects lists and "all" today; the type and comma
+        # checks stay on purpose, belt and braces for a safety rule (the user's).
+        if not isinstance(entity, str) or entity not in self.entities or "," in entity:
+            return False
+        light = self.lights.get(entity)
+        return not (light and light.get("group"))
+
     def send(self, service, entity, data=None, label=None):
-        """Queue light.<service> on entity; its result lands in last (seq goes up)."""
-        payload = {"entity_id": entity}
-        payload.update(data or {})
-        self.calls.append((service, entity, json.dumps(payload).encode(), label or "light." + service))
+        """Queue light.<service> on entity, and only on it; its result lands in last (seq
+        goes up). Refused (False, nothing sent) for anything but one of our lights."""
+        label = label or "light." + service
+        if not self.one_light(entity):
+            self.last = (False, "REFUSED: ONE LIGHT ONLY", 0, b"", label)
+            self.seq += 1
+            print("[neon] hue: refused %s on %r: one light at a time" % (label, entity))
+            return False
+        payload = {k: v for k, v in (data or {}).items() if k not in TARGET_KEYS}
+        payload["entity_id"] = entity
+        self.calls.append((service, entity, json.dumps(payload).encode(), label))
+        return True
 
     def step(self, net, now_ms):
         """Call every pass while the app or the LEDs want the state: one small step."""

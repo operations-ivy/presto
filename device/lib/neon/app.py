@@ -30,7 +30,7 @@ DEFAULTS = {
     "arm_right": "brick",
     "arm_down": "lights",
     "ha_url": "http://brick2000:8123",  # Home Assistant, plain HTTP on the LAN (hue.py); empty: no lights
-    "lights": "light.lamp",  # the light app's lights, comma-separated
+    "lights": "light.lamp",  # the light app's lights, comma-separated, each =name optional
     "leds_light": "light.lamp",  # the back LEDs follow this light (hue.py); empty: the screen's own
     "leds_floor": 1.0,  # their brightness at the light's lowest: full, they face the wall
     "room_port": 8767,  # /room.json and /metrics for Home Assistant and Prometheus (presto#8); 0: off
@@ -67,11 +67,11 @@ def run(presto, secrets):
     ctx.last_touch = time.ticks_ms()
     from neon import hue, ota
 
-    entities = [e.strip() for e in str(s["lights"] or "").split(",") if e.strip()]
+    entities, names = hue.parse_lights(s["lights"])
     leds_light = str(s["leds_light"] or "").strip()
     if leds_light and leds_light not in entities:
         entities.append(leds_light)
-    ctx.hue = hue.Hue(s["ha_url"], getattr(secrets, "HA_TOKEN", ""), entities)
+    ctx.hue = hue.Hue(s["ha_url"], getattr(secrets, "HA_TOKEN", ""), entities, names=names)
     ctx.lamp_rgb = None  # the back LEDs' colour while they follow the light; None: the screen's own
     leds_floor = s["leds_floor"]
     ctx.ota_shown = False
