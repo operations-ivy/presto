@@ -389,6 +389,8 @@ def test_known_asks_before_an_upload(site):
     assert known() == {"known": True, "id": sha[:16], "status": "ready", "hidden": False}
     s.delete(sha[:16])
     assert known() == {"known": False}  # deleted: it can come back
+    metrics = req(host, "/metrics")[1].decode()
+    assert 'route="/api/photos/known"' in metrics  # its own route in the metrics, not "other"
 
 
 @pytest.mark.parametrize("sha", ["", "abc", "g" * 64, "A" * 64, "0" * 63])
