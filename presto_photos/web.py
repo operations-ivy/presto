@@ -117,6 +117,7 @@ def make_handler(
         routes = {
             "/",
             "/api/photos",
+            "/api/photos/known",
             "/api/upload",
             "/api/crop",
             "/api/hide",
