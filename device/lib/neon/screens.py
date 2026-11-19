@@ -472,9 +472,11 @@ class Lights(Screen):
     terminal. The big power key toggles, the bar sets the level, and the four scene keys
     (a 2x2 grid at the bottom) load a scene: a key lights up while its command is on the
     wire, and stays filled while the lamp is in its scene; then its left and right
-    thirds step the level down and up. Several lights (settings:
-    lights): tap the readout to cycle them. (Taps on the top band never get here: it's
-    the way Home.)"""
+    thirds step the level down and up. Several lights (settings: lights, each with
+    its name): the readout's top line is the light the keys act on and its place
+    (OFFICE 1/3); tap the readout for the next. Every key acts on that one light only,
+    never on several at once (hue.py), and the app opens on the first light each
+    time. (Taps on the top band never get here: it's the way Home.)"""
 
     name = "lights"
     frame_ms = 90
@@ -536,6 +538,7 @@ class Lights(Screen):
     def enter(self):
         super().enter()
         self.typed = self.prompt = 0
+        self.target = 0  # the first light (office) on the way in, not the one left last
         self.ctx.hue.next_at = None  # fresh state on the way in
 
     def tap(self, x, y):
@@ -599,10 +602,18 @@ class Lights(Screen):
         rgb = hue.led_colour(light, 0.6)
         return self.ctx.pens.faint if rgb == (0, 0, 0) else self._pen(rgb)
 
+    def _heading(self):
+        """The readout's top line: the light the keys act on, and which of how many."""
+        e = self._entity()
+        if e is None:
+            return "> --"
+        n = len(self.ctx.hue.entities)
+        place = " %d/%d" % (self.target % n + 1, n) if n > 1 else ""
+        return "> " + self.ctx.hue.name(e).upper()[: 15 - len(place)] + place
+
     def _info(self, light):
-        e = self._entity() or "--"
         if light is None:
-            return [("> " + e, "h"), ("STATE UNREACHABLE", "bad"), ("tap to retry", "dim")]
+            return [(self._heading(), "h"), ("STATE UNREACHABLE", "bad"), ("tap to retry", "dim")]
         if light["rgb"] and light["mode"] in ("xy", "hs", "rgb"):
             colour = "#%02X%02X%02X" % light["rgb"]
         elif light["kelvin"]:
@@ -610,7 +621,7 @@ class Lights(Screen):
         else:
             colour = "--"
         lines = [
-            ("> " + light["name"].upper()[:14], "h"),
+            (self._heading(), "h"),
             ("PWR  " + ("ON" if light["on"] else "OFF"), "ok" if light["on"] else "dim"),
             ("LVL  %d%%" % round(light["bri"] * 100), "ok"),
             ("CLR  " + colour, "ok"),

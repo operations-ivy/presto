@@ -25,7 +25,7 @@ arm_left: photos
 arm_right: brick
 arm_down: lights       # the Hue lights (fun: the old SIGNAL LOST)
 ha_url: http://brick2000:8123  # Home Assistant, plain HTTP on the LAN; the token is HA_TOKEN in secrets.py
-lights: light.lamp     # the light app's lights, comma-separated
+lights: light.lamp=office, light.lamp2=bedroom, light.living_room_lamp3=living room  # the light app's lights, comma-separated, each =its name; the keys act on one at a time, never all
 leds_light: light.lamp # the back LEDs follow this light, off with it; empty: the screen's own
 leds_floor: 1.0        # their brightness at the light's lowest: full, they face the wall
 room_port: 8767        # /room.json (Home Assistant) and /metrics (Prometheus) on the LAN; 0: off
