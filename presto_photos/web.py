@@ -70,6 +70,7 @@ READ_CHUNK = 1 << 20  # request bodies are copied to disk this much at a time
 SHA256 = re.compile(r"[0-9a-f]{64}")
 PHOTO_FILE = re.compile(r"^/photo/([0-9a-f]{16})\.(jpg|rgb565)$")
 SHOWING_FOR_S = 30 * 60  # a report older than this: the Presto isn't on Photos (or is off)
+MAX_DELETE = 500  # photos per /api/delete-many (the library's ticked ones)
 # (User-Agent fragment, the name we show), first match wins
 _DEVICE_KEYS = (
     ("iPhone", "iPhone"),
@@ -122,6 +123,7 @@ def make_handler(
             "/api/crop",
             "/api/hide",
             "/api/delete",
+            "/api/delete-many",
             "/preview",
             "/master",
             "/manifest.json",
@@ -290,6 +292,8 @@ def make_handler(
                 return self.media_begin()
             if path == "/api/media/chunk":
                 return self.media_chunk()
+            if path == "/api/delete-many":
+                return self.delete_many()
             pid = self.query_id()
             if not pid:
                 return self.json(400, {"error": "bad id"})
@@ -326,6 +330,23 @@ def make_handler(
                 log.info("photo deleted", photo=pid, device=device_of(self.headers.get("User-Agent", "")))
                 return self.json(200, {"id": pid, "deleted": True})
             self.json(404, {"error": "not found"})
+
+        def delete_many(self):
+            """The library's DELETE (presto#25): {"ids": [...]}, all or nothing
+            on a bad id; ids no longer here are skipped."""
+            try:
+                ids = self.body_json(limit=MAX_DELETE * 24).get("ids")
+            except ValueError as e:
+                return self.json(400, {"error": str(e)})
+            if (
+                not isinstance(ids, list)
+                or not 0 < len(ids) <= MAX_DELETE
+                or not all(isinstance(i, str) and valid_id(i) for i in ids)
+            ):
+                return self.json(400, {"error": f"ids is a list of 1-{MAX_DELETE} photo ids"})
+            gone = store.delete_many(ids)
+            log.info("photos deleted", count=len(gone), device=device_of(self.headers.get("User-Agent", "")))
+            return self.json(200, {"deleted": gone})
 
         def upload(self):
             try:

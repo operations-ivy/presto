@@ -101,6 +101,30 @@ h2{font-family:var(--pixel);font-weight:400;font-size:15px;letter-spacing:3px;co
 @media (prefers-reduced-motion:reduce){.card .on-air{animation:none}}
 .empty{font-family:var(--mono);color:var(--faint);padding:28px 0;text-align:center;border:1px dashed var(--line);border-radius:4px}
 
+/* the two views: UPLINK (adding, and what was just added) and LIBRARY (every photo, to tidy) */
+.tabs{display:flex;gap:8px;margin:0 0 16px}
+.tab{flex:1;min-height:44px;font-family:var(--pixel);font-size:14px;letter-spacing:2px;color:var(--dim);background:var(--panel);
+  border:1px solid var(--line);border-radius:4px;cursor:pointer}
+.tab[aria-selected="true"]{color:var(--cyan);border-color:var(--cyan);box-shadow:0 0 12px rgba(5,217,232,.3)}
+.view[hidden]{display:none}
+.tools{display:flex;gap:8px;align-items:center;justify-content:space-between;margin:0 0 12px;font-family:var(--mono);font-size:13px;color:var(--dim)}
+.tools .btn{flex:0 0 auto;min-height:40px;padding:0 12px;font-size:11px}
+/* a library photo: the card opens the sheet; the box in its corner ticks it */
+.cell{position:relative}
+.cell .card{width:100%}
+.tick{position:absolute;top:0;right:0;width:48px;height:48px;display:grid;place-items:center;cursor:pointer;z-index:1}
+.tick input{appearance:none;-webkit-appearance:none;margin:0;width:26px;height:26px;border:2px solid var(--text);border-radius:3px;
+  background:rgba(7,5,15,.7);cursor:pointer;display:grid;place-items:center}
+.tick input:checked{background:var(--red);border-color:var(--red);box-shadow:0 0 10px rgba(255,56,96,.6)}
+.tick input:checked::after{content:"";width:7px;height:13px;border:solid var(--night);border-width:0 3px 3px 0;transform:translateY(-2px) rotate(45deg)}
+.tick input:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.cell.picked .card{border-color:var(--red);box-shadow:0 0 12px rgba(255,56,96,.35)}
+/* the delete bar: above the skyline while anything is ticked */
+.delbar{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 16px);z-index:4;display:flex;justify-content:center;padding:0 var(--gutter)}
+.delbar[hidden]{display:none}
+body.picking{padding-bottom:180px}  /* room to scroll the last row above the bar */
+.delbar .btn{flex:0 1 420px;min-height:56px;font-size:15px;background:var(--panel);box-shadow:0 0 18px rgba(255,56,96,.45)}
+
 /* the photo sheet */
 dialog{border:0;padding:0;background:transparent;color:inherit;max-width:min(760px,100vw);width:100%;max-height:100vh}
 dialog::backdrop{background:rgba(3,2,8,.82)}
@@ -147,6 +171,12 @@ input[type=range]{width:100%;accent-color:var(--cyan);margin:12px 0 4px}
     <div class="status" id="status">STORE <b>--</b><br>QUEUE <b>0</b></div>
   </header>
 
+  <div class="tabs" role="tablist">
+    <button class="tab" id="tab-uplink" type="button" role="tab" aria-controls="uplink">UPLINK</button>
+    <button class="tab" id="tab-library" type="button" role="tab" aria-controls="library">LIBRARY</button>
+  </div>
+
+  <section class="view" id="uplink" role="tabpanel" aria-labelledby="tab-uplink">
   <button class="add" id="add" type="button"><span class="plus">+</span> ADD PHOTOS / MEDIA</button>
   <input id="file" type="file" multiple hidden
     accept="image/heic,image/heif,image/jpeg,image/png,audio/*,video/*,.mkv,.mka,.flac,.opus,.m4a,.m4v,.avi,.wmv,.mpg,.mpeg,.ts,.webm,.ogg,.wav,.aiff">
@@ -160,9 +190,22 @@ input[type=range]{width:100%;accent-color:var(--cyan);margin:12px 0 4px}
     <div class="media" id="media"></div>
   </section>
 
-  <h2>ON THE FRAME</h2>
+  <h2>JUST ADDED</h2>
   <div class="grid" id="grid"></div>
+  </section>
+
+  <section class="view" id="library" role="tabpanel" aria-labelledby="tab-library" hidden>
+    <h2 id="lib-title">LIBRARY</h2>
+    <div class="tools">
+      <span id="lib-count"></span>
+      <span><button class="btn" id="pick-all" type="button">SELECT ALL</button>
+        <button class="btn" id="pick-none" type="button">CLEAR</button></span>
+    </div>
+    <div class="grid" id="libgrid"></div>
+  </section>
 </main>
+
+<div class="delbar" id="delbar" hidden><button class="btn danger" id="del-picked" type="button">DELETE</button></div>
 
 <svg id="city" viewBox="0 0 480 150" preserveAspectRatio="xMidYMax slice" aria-hidden="true"></svg>
 <div id="street" aria-hidden="true"></div>
@@ -414,32 +457,93 @@ async function refresh(){
   photos = d.photos;
   $("status").innerHTML = "STORE <b>" + fmtMB(d.usage) + "</b> / " + fmtMB(d.limit) + "<br>QUEUE <b>" + d.pending + "</b>"
     + (refreshMedia.status ? "<br>" + refreshMedia.status : "");
+  showing = d.showing;
+  // UPLINK shows what was just added (presto#25): the last RECENT_S, and
+  // anything still being made. Everything else is in LIBRARY.
+  const recent = photos.filter((p) => d.now - (p.added || 0) < RECENT_S || p.status === "converting" || p.status === "recrop");
   const grid = $("grid"); grid.innerHTML = "";
-  if (!photos.length){ grid.innerHTML = '<div class="empty" style="grid-column:1/-1">NO PHOTOS YET. ADD SOME.</div>'; }
-  for (const p of photos){
-    const b = document.createElement("button"); b.type = "button"; b.className = "card";
-    const st = p.hidden ? "hidden" : p.status;
-    if (p.status === "ready" || (p.status === "recrop")) {
-      const img = document.createElement("img"); img.alt = ""; img.loading = "lazy";
-      img.src = "/preview?id=" + p.id + "&v=" + (p.recropped || p.converted || 0); b.appendChild(img);
-    } else {
-      const w = document.createElement("div"); w.className = "wait"; w.textContent = p.status === "failed" ? "NO SIGNAL" : "TUNING IN"; b.appendChild(w);
-    }
-    const m = document.createElement("div"); m.className = "meta";
-    m.innerHTML = '<span class="chip ' + st + '">' + st.toUpperCase() + '</span><span></span>';
-    m.lastChild.textContent = p.source ? (p.source.format === "MPO" ? "JPEG" : p.source.format) : (p.upload && p.upload.filename || "");
-    b.appendChild(m);
-    if (p.id === d.showing){
-      b.classList.add("on");
-      const t = document.createElement("span"); t.className = "on-air"; t.textContent = "ON PRESTO"; b.appendChild(t);
-    }
-    b.onclick = () => show(p.id);
-    grid.appendChild(b);
-  }
+  if (!recent.length) grid.innerHTML = '<div class="empty" style="grid-column:1/-1">'
+    + (photos.length ? "NOTHING NEW TODAY. EVERY PHOTO IS IN THE LIBRARY." : "NO PHOTOS YET. ADD SOME.") + "</div>";
+  for (const p of recent) grid.appendChild(card(p));
+  renderLibrary();
   if (open){ const p = photos.find((x) => x.id === open); if (p) facts(p); }
   const busy = d.pending || photos.some((p) => p.status === "converting" || p.status === "recrop");
   clearTimeout(refresh.t); refresh.t = setTimeout(refresh, busy ? 2000 : 15000);
 }
+
+function card(p){
+  const b = document.createElement("button"); b.type = "button"; b.className = "card";
+  const st = p.hidden ? "hidden" : p.status;
+  if (p.status === "ready" || (p.status === "recrop")) {
+    const img = document.createElement("img"); img.alt = ""; img.loading = "lazy";
+    img.src = "/preview?id=" + p.id + "&v=" + (p.recropped || p.converted || 0); b.appendChild(img);
+  } else {
+    const w = document.createElement("div"); w.className = "wait"; w.textContent = p.status === "failed" ? "NO SIGNAL" : "TUNING IN"; b.appendChild(w);
+  }
+  const m = document.createElement("div"); m.className = "meta";
+  m.innerHTML = '<span class="chip ' + esc(st) + '">' + esc(st).toUpperCase() + '</span><span></span>';
+  m.lastChild.textContent = p.source ? (p.source.format === "MPO" ? "JPEG" : p.source.format) : (p.upload && p.upload.filename || "");
+  b.appendChild(m);
+  if (p.id === showing){
+    b.classList.add("on");
+    const t = document.createElement("span"); t.className = "on-air"; t.textContent = "ON PRESTO"; b.appendChild(t);
+  }
+  b.onclick = () => show(p.id);
+  return b;
+}
+
+// ---- the library: every photo, tick and delete (presto#25) ----
+const RECENT_S = 24 * 3600;
+const picked = new Set();
+let showing = null;
+function renderLibrary(){
+  for (const id of [...picked]) if (!photos.some((p) => p.id === id)) picked.delete(id);
+  const g = $("libgrid"); g.innerHTML = "";
+  if (!photos.length) g.innerHTML = '<div class="empty" style="grid-column:1/-1">THE LIBRARY IS EMPTY.</div>';
+  for (const p of photos){
+    const cell = document.createElement("div"); cell.className = "cell" + (picked.has(p.id) ? " picked" : "");
+    cell.appendChild(card(p));
+    const tick = document.createElement("label"); tick.className = "tick";
+    const box = document.createElement("input"); box.type = "checkbox"; box.checked = picked.has(p.id);
+    box.setAttribute("aria-label", "Select photo " + p.id.slice(0, 6).toUpperCase());
+    box.onchange = () => { box.checked ? picked.add(p.id) : picked.delete(p.id); cell.classList.toggle("picked", box.checked); pickedChanged(); };
+    tick.appendChild(box); cell.appendChild(tick);
+    g.appendChild(cell);
+  }
+  const on = photos.filter((p) => p.status === "ready" && !p.hidden).length;
+  $("lib-title").textContent = "LIBRARY // " + photos.length + (photos.length === 1 ? " PHOTO" : " PHOTOS");
+  $("lib-count").textContent = on + " ON THE FRAME";
+  pickedChanged();
+}
+function pickedChanged(){
+  const n = picked.size;
+  $("delbar").hidden = !n || location.hash !== "#library";
+  document.body.classList.toggle("picking", !$("delbar").hidden);
+  $("del-picked").textContent = "DELETE " + n + (n === 1 ? " PHOTO" : " PHOTOS");
+}
+$("pick-all").onclick = () => { for (const p of photos) picked.add(p.id); renderLibrary(); };
+$("pick-none").onclick = () => { picked.clear(); renderLibrary(); };
+$("del-picked").onclick = async () => {
+  const ids = [...picked], n = ids.length;
+  if (!n) return;
+  const onAir = ids.includes(showing) ? " One of them is on the Presto right now." : "";
+  if (!confirm("Delete " + n + (n === 1 ? " photo" : " photos") + " from the Presto? This can't be undone." + onAir)) return;
+  $("del-picked").disabled = true;
+  try { if (await post("/api/delete-many", {ids})){ picked.clear(); } } finally { $("del-picked").disabled = false; }
+  refresh();
+};
+
+// ---- the tabs: #library is LIBRARY, anything else UPLINK ----
+function route(){
+  const lib = location.hash === "#library";
+  $("uplink").hidden = lib; $("library").hidden = !lib;
+  $("tab-uplink").setAttribute("aria-selected", String(!lib)); $("tab-library").setAttribute("aria-selected", String(lib));
+  pickedChanged();
+}
+$("tab-uplink").onclick = () => { history.replaceState(null, "", location.pathname + location.search); route(); };
+$("tab-library").onclick = () => { location.hash = "library"; };
+addEventListener("hashchange", route);
+route();
 
 // ---- one photo ----
 function facts(p){
