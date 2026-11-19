@@ -133,6 +133,19 @@ Things that have bitten (details in homelab-context `docs/hosts.md`):
 - **Speed** (full_res): a full clear is 45 ms and a full update 24 ms, so a
   full repaint runs at about 10 fps; Home measures 9-10 fps.
 
+## UPLINK and LIBRARY (presto#25)
+
+The upload page has two tabs. **UPLINK** adds photos and media, and under
+JUST ADDED shows only the photos added in the last 24 hours (and any still
+converting), so old photos don't pile up there. **LIBRARY**
+(`/#library`) shows every photo, with a tick box in each one's corner: tick
+some (or SELECT ALL), then DELETE N PHOTOS, which asks first. Tapping a
+photo still opens its sheet (crop, hide, delete).
+
+The tab sends `POST /api/delete-many` with `{"ids": [...]}` (up to 500,
+page-only like every change): a bad id refuses the lot, ids already gone are
+skipped, and the Presto's manifest is rewritten once, after them all.
+
 ## Duplicate photos (presto#19)
 
 A photo's id is the first 16 hex digits of its SHA-256, so its record in the

@@ -238,6 +238,61 @@ def test_crop_hide_delete(site):
     assert s.meta(pid) is None
 
 
+def converted(s, host, n):
+    """n photos uploaded through the page and converted; their ids."""
+    datas = [jpeg((700, 700), (40 * i, 90, 200)) for i in range(n)]
+    for data in datas:
+        req(host, "/api/upload", data=data, headers=page_headers(host))
+    worker.tick(s)
+    return [photo_id(d) for d in datas]
+
+
+def test_delete_many_writes_the_manifest_once(tmp_path, monkeypatch):
+    s = Store(tmp_path)
+    datas = [jpeg((700, 700), (60 * i, 90, 200)) for i in range(3)]
+    for data in datas:
+        queue(s, data)
+    worker.tick(s)
+    a, b, c = (photo_id(d) for d in datas)
+    writes = []
+    real = s.write_manifest
+    monkeypatch.setattr(s, "write_manifest", lambda: writes.append(1) or real())
+    assert s.delete_many([a, c, a, "0" * 16]) == [a, c]  # repeats and strangers skipped
+    assert writes == [1]
+    assert [p["id"] for p in s.photos()] == [b]
+    assert [p["id"] for p in json.loads(s.p("manifest.json").read_text())["photos"]] == [b]
+    assert not s.p("previews", a + ".png").exists() and not s.p("masters", c + ".jpg").exists()
+    assert s.delete_many(["0" * 16]) == [] and writes == [1]  # nothing gone: no rewrite
+
+
+def test_library_delete_many(site):
+    s, host = site
+    a, b, c = converted(s, host, 3)
+    body = json.dumps({"ids": [a, b]}).encode()
+    assert req(host, "/api/delete-many", data=body, headers={"X-Presto": "1"})[0] == 403  # not from the page
+    code, out, _ = req(host, "/api/delete-many", data=body, headers=page_headers(host))
+    assert code == 200 and json.loads(out) == {"deleted": [a, b]}
+    assert [p["id"] for p in s.photos()] == [c]
+    code, _, _ = req(host, "/api/delete-many", data=json.dumps([c]).encode(), headers=page_headers(host))
+    assert code == 400 and s.meta(c)  # a JSON list, not an object: refused, not a crash
+
+
+@pytest.mark.parametrize("ids", [
+    pytest.param([], id="none"),
+    pytest.param("abc", id="not-a-list"),
+    pytest.param(["../../etc/passwd"], id="bad-id"),
+    pytest.param(["a" * 16, 7], id="not-a-string"),
+    pytest.param(["a" * 16] * (web.MAX_DELETE + 1), id="too-many"),
+])
+def test_library_delete_many_refuses(site, ids):
+    s, host = site
+    (keep,) = converted(s, host, 1)
+    if isinstance(ids, list) and ids:
+        ids = [*ids, keep]  # a good id beside the bad ones
+    code, _, _ = req(host, "/api/delete-many", data=json.dumps({"ids": ids}).encode(), headers=page_headers(host))
+    assert code == 400 and s.meta(keep)  # all or nothing: the good id is kept too
+
+
 def test_limits(site, monkeypatch):
     s, host = site
     monkeypatch.setattr(web, "MAX_UPLOAD", 1000)
