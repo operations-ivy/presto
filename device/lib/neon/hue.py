@@ -230,6 +230,8 @@ class Hue:
     def one_light(self, entity):
         """Whether entity is one of our lights, alone: a configured light.* that isn't a
         group (module docstring)."""
+        # `not in self.entities` alone rejects lists and "all" today; the type and comma
+        # checks stay on purpose, belt and braces for a safety rule (the user's).
         if not isinstance(entity, str) or entity not in self.entities or "," in entity:
             return False
         light = self.lights.get(entity)
