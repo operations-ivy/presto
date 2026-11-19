@@ -8,7 +8,10 @@ has no network.
 
     GET  /                     the page
     GET  /api/photos           the library: every photo's record, the store's usage
-    POST /api/upload           one photo, raw body (X-Filename, Content-Type)
+    GET  /api/photos/known?sha=   whether a photo (its SHA-256, 64 hex) is in the
+                               store already: the page asks before it uploads (presto#19)
+    POST /api/upload           one photo, raw body (X-Filename, Content-Type); 200
+                               {"status": "duplicate"} when it's in the store already
     POST /api/crop?id=         {"crop": [cx, cy, size]}: redo the photo with this crop
     POST /api/hide?id=         {"hidden": bool}: keep it, but off the frame
     POST /api/delete?id=       remove it
@@ -34,6 +37,7 @@ timeouts) and a dropped one resumes where it stopped. The sorter files them.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
@@ -63,6 +67,7 @@ MAX_CHUNK = 64 << 20
 MEDIA_UPLOADS = Counter("media_uploads_total", "Media uploads, by kind and result", ["kind", "result"])
 SYNCS = Counter("media_sync_requests_total", "Sync manifests served, by device", ["device"])
 READ_CHUNK = 1 << 20  # request bodies are copied to disk this much at a time
+SHA256 = re.compile(r"[0-9a-f]{64}")
 PHOTO_FILE = re.compile(r"^/photo/([0-9a-f]{16})\.(jpg|rgb565)$")
 SHOWING_FOR_S = 30 * 60  # a report older than this: the Presto isn't on Photos (or is off)
 # (User-Agent fragment, the name we show), first match wins
@@ -178,17 +183,26 @@ def make_handler(
                 "received": int(time.time()),
             }
 
-        def _read_body_to(self, f, n: int) -> int:
-            """Copy the next n bytes of the body into f, READ_CHUNK at a time;
-            returns how many didn't arrive (0: all of them)."""
+        def _read_body_to(self, f, n: int, digest=None) -> int:
+            """Copy the next n bytes of the body into f, READ_CHUNK at a time,
+            feeding digest (a hashlib object) when given; returns how many
+            didn't arrive (0: all of them)."""
             left = n
             while left:
                 chunk = self.rfile.read(min(left, READ_CHUNK))
                 if not chunk:
                     break
                 f.write(chunk)
+                if digest is not None:
+                    digest.update(chunk)
                 left -= len(chunk)
             return left
+
+        def known(self, pid: str) -> dict:
+            m = store.known(pid)
+            if m is None:
+                return {"known": False}
+            return {"known": True, "id": pid, "status": m["status"], "hidden": bool(m.get("hidden"))}
 
         def body_json(self, limit=4096) -> dict:
             n = int(self.headers.get("Content-Length") or 0)
@@ -235,6 +249,11 @@ def make_handler(
                         "showing": on,
                     },
                 )
+            if path == "/api/photos/known":
+                sha = self.query("sha")
+                if not SHA256.fullmatch(sha):
+                    return self.json(400, {"error": "needs sha: the photo's SHA-256, 64 hex digits"})
+                return self.json(200, self.known(sha[:16]))
             if path.startswith("/api/media/"):
                 return self.media_get(path)
             if path == "/manifest.json":
@@ -323,12 +342,21 @@ def make_handler(
                 return self.json(507, {"error": "the photo store is full: delete some photos first"})
             up = store.begin_upload()
             part = store.upload_part(up)
+            digest = hashlib.sha256()
             with part.open("wb") as f:
-                left = self._read_body_to(f, n)
+                left = self._read_body_to(f, n, digest)
             if left:
                 part.unlink(missing_ok=True)
                 UPLOADS.labels("cut_short").inc()
                 return self.json(400, {"error": "upload cut short"})
+            # The page asks first (/api/photos/known); this catches a page that
+            # couldn't hash (no crypto.subtle, an old tab) and a script.
+            pid = digest.hexdigest()[:16]  # store.photo_id, without reading the file again
+            if (dup := self.known(pid))["known"]:
+                part.unlink(missing_ok=True)
+                UPLOADS.labels("duplicate").inc()
+                log.info("duplicate upload skipped", photo=pid, bytes=n)
+                return self.json(200, {"id": pid, "status": "duplicate", "hidden": dup["hidden"]})
             info = self.origin_info(
                 filename=(self.headers.get("X-Filename") or "photo")[:200],
                 content_type=(self.headers.get("Content-Type") or "")[:100],

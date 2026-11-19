@@ -257,18 +257,46 @@ function staticBurst(){
 $("add").onclick = () => $("file").click();
 $("file").onchange = () => { for (const f of $("file").files) (isPhoto(f) ? upload(f) : queueMedia(f)); $("file").value = ""; };
 
-function upload(f){
+// Dupe check (presto#19): a photo's id is its SHA-256, so the page hashes the
+// file and asks the store before sending it. Without crypto.subtle (not a
+// secure context) it just uploads, and the server says if it was a duplicate.
+// One file is read into memory at a time (fifty 25 MB photos at once would
+// sink a phone), so hashing goes one after another. `sending` catches the same
+// photo picked twice while the first is still on its way.
+const sending = new Set();
+let hashChain = Promise.resolve(null);
+async function sha256(f){
+  if (!(window.crypto && crypto.subtle)) return null;
+  const d = new Uint8Array(await crypto.subtle.digest("SHA-256", await f.arrayBuffer()));
+  return Array.from(d, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+const dupeText = (d) => d.hidden ? "ALREADY IN THE STORE (HIDDEN)" : "ALREADY ON THE FRAME";
+
+async function upload(f){
   const q = document.createElement("div"); q.className = "q";
-  q.innerHTML = '<div class="row"><span class="name"></span><span class="st">SENDING</span></div><div class="bar"><i></i></div>';
+  q.innerHTML = '<div class="row"><span class="name"></span><span class="st">CHECKING</span></div><div class="bar"><i></i></div>';
   q.querySelector(".name").textContent = f.name + "  (" + (f.size / 1048576).toFixed(1) + " MB, " + (f.type || "?") + ")";
   $("queue").prepend(q);
+  const skip = (text) => { say(q, text, "done"); setTimeout(() => q.remove(), 6000); };
+  const sha = await (hashChain = hashChain.then(() => sha256(f)).catch(() => null));
+  if (sha) {
+    if (sending.has(sha)) return skip("ALREADY SENDING");
+    try {
+      const k = await (await fetch("/api/photos/known?sha=" + sha, {cache: "no-store"})).json();
+      if (k.known) return skip(dupeText(k));
+    } catch (e) {}  // can't ask: upload, the server checks too
+    sending.add(sha);
+  }
+  say(q, "SENDING");
   const x = new XMLHttpRequest();
   x.open("POST", "/api/upload");
   x.setRequestHeader("X-Presto", "1");
   x.setRequestHeader("X-Filename", f.name);
   x.setRequestHeader("Content-Type", f.type || "application/octet-stream");
   x.upload.onprogress = (e) => { if (e.lengthComputable) q.querySelector("i").style.width = (100 * e.loaded / e.total) + "%"; };
+  x.onloadend = () => sending.delete(sha);
   x.onload = () => {
+    if (x.status === 200) { let d = {}; try { d = JSON.parse(x.responseText); } catch (e) {} return skip(dupeText(d)); }
     let msg = "QUEUED"; try { msg = x.status === 202 ? "CONVERTING" : (JSON.parse(x.responseText).error || x.status).toString().toUpperCase(); } catch (e) {}
     q.querySelector(".st").textContent = msg; q.classList.add(x.status === 202 ? "done" : "err");
     if (x.status === 202) setTimeout(() => q.remove(), 6000);

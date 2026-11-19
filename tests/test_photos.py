@@ -1,5 +1,6 @@
 """presto-photos: the pipeline, the store, and the web server over real HTTP."""
 
+import hashlib
 import io
 import json
 import threading
@@ -371,3 +372,44 @@ def test_serves_the_device_manifest_and_bundle(tmp_path):
 def test_no_device_code_is_a_404(site):
     s, host = site
     assert req(host, "/device/manifest.json")[0] == 404
+
+
+# --- dupe check (presto#19) -----------------------------------------------
+def test_known_asks_before_an_upload(site):
+    s, host = site
+    data = jpeg((700, 700), (10, 200, 60))
+    sha = hashlib.sha256(data).hexdigest()
+
+    def known():
+        return json.loads(req(host, f"/api/photos/known?sha={sha}")[1])
+
+    assert known() == {"known": False}
+    req(host, "/api/upload", data=data, headers=page_headers(host))
+    worker.tick(s)
+    assert known() == {"known": True, "id": sha[:16], "status": "ready", "hidden": False}
+    s.delete(sha[:16])
+    assert known() == {"known": False}  # deleted: it can come back
+
+
+@pytest.mark.parametrize("sha", ["", "abc", "g" * 64, "A" * 64, "0" * 63])
+def test_known_needs_a_whole_sha(site, sha):
+    _, host = site
+    assert req(host, f"/api/photos/known?sha={sha}")[0] == 400
+
+
+def test_duplicate_upload_is_not_queued(site):
+    s, host = site
+    data = jpeg((640, 480))
+    assert req(host, "/api/upload", data=data, headers=page_headers(host))[0] == 202
+    worker.tick(s)
+    code, body, _ = req(host, "/api/upload", data=data, headers=page_headers(host))
+    assert code == 200
+    assert json.loads(body) == {"id": photo_id(data), "status": "duplicate", "hidden": False}
+    assert not s.pending_uploads() and not list(s.p("inbox").iterdir())
+
+
+def test_a_failed_photo_is_not_known(tmp_path):
+    s = Store(tmp_path)
+    s.save_meta({"id": "0" * 16, "status": "failed"})
+    s.save_meta({"id": "1" * 16, "status": "converting"})
+    assert s.known("0" * 16) is None and s.known("1" * 16)["status"] == "converting"
