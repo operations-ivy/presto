@@ -128,6 +128,25 @@ Things that have bitten (details in homelab-context `docs/hosts.md`):
 - **Speed** (full_res): a full clear is 45 ms and a full update 24 ms, so a
   full repaint runs at about 10 fps; Home measures 9-10 fps.
 
+## Duplicate photos (presto#19)
+
+A photo's id is the first 16 hex digits of its SHA-256, so its record in the
+store's `meta/` (on the `presto-photos` volume) is also the record of what's
+been uploaded. Before it sends a photo, the upload page hashes the file in the
+browser and asks `GET /api/photos/known?sha=<64 hex>`; a photo already in the
+store (on the frame, hidden, or converting) isn't sent, and the queue says
+ALREADY ON THE FRAME (or IN THE STORE (HIDDEN)). The page hashes one file at a
+time, so a big pick doesn't fill a phone's memory.
+
+The server checks too, while the upload arrives: a duplicate is answered
+`200 {"status": "duplicate"}` and never queued (a page that can't hash, an old
+tab, a script). Counted as `photos_uploads_total{result="duplicate"}`.
+
+- A deleted photo leaves the record, so it can be uploaded again.
+- A failed one can be retried: a newer converter may manage it.
+- It's the exact file: the same picture re-saved or resized is a new photo.
+  Audio and video aren't checked yet (presto#47).
+
 ## Media importer (presto#39)
 
 The upload page (presto.brick.nozdormu.cloud) takes audio and video as well as

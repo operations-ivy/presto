@@ -12,7 +12,9 @@
     manifest.json              what the Presto shows, in order
 
 A photo's id is the first 16 hex digits of its original's SHA-256, so the
-same photo uploaded twice is stored once.
+same photo uploaded twice is stored once. That makes meta/ the dupe check's
+record too (presto#19): durable on the volume, and a deleted photo leaves it,
+so it can be uploaded again.
 """
 
 from __future__ import annotations
@@ -125,6 +127,13 @@ class Store:
             return json.loads(self.p("meta", pid + ".json").read_text())
         except (FileNotFoundError, ValueError):
             return None
+
+    def known(self, pid: str) -> dict | None:
+        """The photo's record when it's already in the store (on the frame,
+        hidden, or being converted), so a new upload of it is a duplicate.
+        A failed one isn't: it may convert now."""
+        m = self.meta(pid)
+        return m if m and m.get("status") in ("ready", "converting") else None
 
     def save_meta(self, m: dict) -> None:
         write_atomic(self.p("meta", m["id"] + ".json"), json.dumps(m, indent=1).encode())
