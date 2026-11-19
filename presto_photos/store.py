@@ -28,6 +28,8 @@ from pathlib import Path
 
 ORIGINAL_DAYS = 7
 DIRS = ("inbox", "originals", "masters", "out", "previews", "meta")
+# a photo's made files (its original, any extension, and meta/ are deleted on their own)
+PHOTO_FILES = (("masters", ".jpg"), ("out", ".rgb565"), ("out", ".jpg"), ("previews", ".png"))
 
 
 def photo_id(data: bytes) -> str:
@@ -156,7 +158,7 @@ class Store:
         for pid in dict.fromkeys(pids):
             if self.meta(pid) is None:
                 continue
-            for d, ext in (("masters", ".jpg"), ("out", ".rgb565"), ("out", ".jpg"), ("previews", ".png")):
+            for d, ext in PHOTO_FILES:
                 self.p(d, pid + ext).unlink(missing_ok=True)
             for f in self.p("originals").glob(pid + ".*"):
                 f.unlink(missing_ok=True)

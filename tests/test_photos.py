@@ -273,6 +273,8 @@ def test_library_delete_many(site):
     code, out, _ = req(host, "/api/delete-many", data=body, headers=page_headers(host))
     assert code == 200 and json.loads(out) == {"deleted": [a, b]}
     assert [p["id"] for p in s.photos()] == [c]
+    code, _, _ = req(host, "/api/delete-many", data=json.dumps([c]).encode(), headers=page_headers(host))
+    assert code == 400 and s.meta(c)  # a JSON list, not an object: refused, not a crash
 
 
 @pytest.mark.parametrize("ids", [
