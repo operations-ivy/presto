@@ -379,7 +379,10 @@ def test_known_asks_before_an_upload(site):
     s, host = site
     data = jpeg((700, 700), (10, 200, 60))
     sha = hashlib.sha256(data).hexdigest()
-    known = lambda: json.loads(req(host, f"/api/photos/known?sha={sha}")[1])  # noqa: E731
+
+    def known():
+        return json.loads(req(host, f"/api/photos/known?sha={sha}")[1])
+
     assert known() == {"known": False}
     req(host, "/api/upload", data=data, headers=page_headers(host))
     worker.tick(s)
