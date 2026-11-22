@@ -11,8 +11,10 @@ spec:
     http:
       paths:
       # The pager (presto-alerts, presto#52): what's firing, and a 1 hour silence.
+      # Prefix, not Exact: Traefik ranks routes by rule length, and Path(`/alerts`)
+      # ties PathPrefix(`/`) at 15 characters, so the catch-all won now and then.
       - path: /alerts
-        pathType: Exact
+        pathType: Prefix
         backend:
           service:
             name: presto-alerts
