@@ -2,7 +2,7 @@
 
 import time
 
-from neon import card, conf, fx, nav, roomhttp, services, theme, uplink
+from neon import card, conf, fx, nav, pager, roomhttp, services, theme, uplink
 
 DEFAULTS = {
     "idle_seconds": 14400,  # 4 h with no touch: go to idle_screen, if one is set
@@ -25,6 +25,8 @@ DEFAULTS = {
     "brick_feed": "https://presto.brick.nozdormu.cloud/brick.json",  # the Brick screen's uplink; empty: none
     "ota_url": "https://presto.brick.nozdormu.cloud/device",  # updates over Wi-Fi (presto#9); empty: USB only
     "ota_minutes": 10,  # how often to look for one
+    "alerts_url": "https://presto.brick.nozdormu.cloud/alerts",  # the pager (presto-alerts, presto#52); empty: off
+    "alerts_minutes": 2,  # how often to ask, when nobody's touching the screen (a fetch stalls it ~3 s)
     "arm_up": "weather",
     "arm_left": "photos",
     "arm_right": "brick",
@@ -59,6 +61,8 @@ def run(presto, secrets):
     ctx.room = services.Room(ctx.fahrenheit, s["temp_offset_c"])
     room_server = roomhttp.Server(ctx.room, s["room_port"]) if s["room_port"] else None
     ctx.uplink = uplink.Uplink(s["brick_feed"])  # presto-feed: Brick's pages and Weather's rooms
+    ctx.pager = pager.Pager(s["alerts_url"], s["alerts_minutes"] * 60)  # presto-alerts (presto#52)
+    ctx.goto = None  # a screen asks for a switch (Home's badge -> ALERTS); the loop does it
     chirp = services.Chirp(s["chirp"], s["chirp_volume"])
     card.mount()
     from neon import photosync
@@ -89,7 +93,8 @@ def run(presto, secrets):
     ctx.arms = {"up": s["arm_up"], "left": s["arm_left"], "right": s["arm_right"], "down": s["arm_down"]}
     screens_by_name = dict(apps)
     screens_by_name[nav.HOME] = home.Home(ctx)
-    plus = nav.Plus(ctx.arms)
+    screens_by_name[nav.ALERTS] = screens.Alerts(ctx)  # off the plus: Home's badge opens it
+    plus = nav.Plus(ctx.arms, extras=(nav.ALERTS,))
 
     touch = presto.touch
     cur = screens_by_name[nav.HOME]
@@ -158,6 +163,10 @@ def run(presto, secrets):
                     target = plus.tap(x0, y0, now)
                     if target is None:
                         cur.tap(x0, y0)  # not a navigation band: the app's own tap
+                        if ctx.goto:  # it asked for another screen (Home's badge)
+                            target, ctx.goto = ctx.goto, None
+                            chirp.enter_app()
+                            switch(target)
                     else:
                         plus.current = before  # switch() moves it
                         chirp.go_home() if target == nav.HOME else chirp.enter_app()
@@ -185,6 +194,14 @@ def run(presto, secrets):
             if room_server is not None:
                 room_server.step(ctx.net.up, now)
             ctx.feed.step(ctx.net, last_touch)
+            if ctx.pager.step(ctx.net, last_touch, now):
+                cur.dirty = True
+                # a new critical alert opens ALERTS by itself, once; it beeps only if chirp is on
+                if ctx.pager.take_critical() and plus.current != nav.ALERTS:
+                    chirp.enter_app()
+                    switch(nav.ALERTS)
+                elif plus.current == nav.ALERTS:
+                    cur.leds(presto, now)
             ctx.ota.step(ctx.net, last_touch, now)
             if ctx.ota_shown:  # a download that didn't end in a restart: the LEDs come back
                 ctx.ota_shown, ctx.lamp_rgb = False, None

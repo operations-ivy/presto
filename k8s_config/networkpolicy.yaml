@@ -133,6 +133,56 @@ spec:
     ports:
     - port: 9090
 ---
+# The pager's relay: from Traefik (GET /alerts, POST /silence) and Prometheus' scrape.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: alerts-ingress
+  namespace: presto
+spec:
+  podSelector:
+    matchLabels:
+      app: presto-alerts
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: traefik
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+    ports:
+    - port: 8080
+---
+# The relay, and only the relay, may reach Alertmanager.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: alerts-egress-alertmanager
+  namespace: presto
+spec:
+  podSelector:
+    matchLabels:
+      app: presto-alerts
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: alertmanager
+    ports:
+    - port: 9093
+---
 # Every pod: out to DNS and the OpenTelemetry collector only. No internet, no
 # LAN, no other service.
 apiVersion: networking.k8s.io/v1

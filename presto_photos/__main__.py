@@ -1,11 +1,12 @@
-"""presto-photos: `python -m presto_photos web|convert|sort|feed`.
+"""presto-photos: `python -m presto_photos web|convert|sort|feed|alerts`.
 
 feed: presto-feed, the Brick screen's JSON from Prometheus (feed.py); no store.
+alerts: presto-alerts, the pager's read and silence API in front of Alertmanager (alerts.py); no store.
 sort: the media sorter (sorter.py): files audio and video uploads on the media drive.
 
 PHOTOS_ROOT        the store (default /data)
 PHOTOS_LIMIT_GB    the store's size cap (default 5)
-PORT               web: the page; convert, sort: /metrics and /health; feed: the JSON (default 8080)
+PORT               web: the page; convert, sort: /metrics and /health; feed, alerts: the JSON (default 8080)
 DEVICE_DIR         web: the Presto's code to serve over Wi-Fi (default /code/device)
 MEDIA_ROOT         web, sort: the media inbox (inbox.py); web: unset, no media uploads
 MEDIA_LIMIT_GB     web: the inbox's cap, all uploads together (default 20)
@@ -22,7 +23,7 @@ from pathlib import Path
 import brick_observe
 
 GB = 1 << 30
-MODES = ("web", "convert", "sort", "feed")
+MODES = ("web", "convert", "sort", "feed", "alerts")
 
 
 def default_devices() -> Path:
@@ -47,6 +48,12 @@ def run_feed(port: int) -> None:
     from . import feed
 
     feed.serve(port)
+
+
+def run_alerts(port: int) -> None:
+    from . import alerts
+
+    alerts.serve(port)
 
 
 def run_sort(port: int) -> None:
@@ -90,11 +97,13 @@ def main(argv=None) -> None:
     mode = argv[0] if argv else ""
     if mode not in MODES:
         sys.exit("usage: python -m presto_photos " + "|".join(MODES))
-    brick_observe.init("presto-feed" if mode == "feed" else f"presto-photos-{mode}")
+    brick_observe.init(f"presto-{mode}" if mode in ("feed", "alerts") else f"presto-photos-{mode}")
     port = int(os.environ.get("PORT", "8080"))
     match mode:
         case "feed":
             run_feed(port)
+        case "alerts":
+            run_alerts(port)
         case "sort":
             run_sort(port)
         case "web":
