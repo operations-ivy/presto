@@ -24,7 +24,7 @@ Navigation is by taps (swipes do nothing): each edge has a 64 px tap band.
 | In an app, tap the edge facing Home (its small arrow) | goes Home |
 | Two-finger tap | Home, from anywhere |
 | Any other tap | the app's own action (Photos: right half next, left half previous; Home: glitch) |
-| No touch for `idle_seconds` | the `idle_screen` (Photos) |
+| No touch for `idle_seconds` | nothing by default: Photos opens only by hand (the user, 2026-11-21); an `idle_screen` goes there |
 
 Sound is off by default (`chirp: false`); turned on, it's soft two-note
 chimes with a bell envelope at `chirp_volume`.
