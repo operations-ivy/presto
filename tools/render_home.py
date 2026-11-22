@@ -13,6 +13,7 @@ N frames, 90 ms apart (rain, flicker), and keeps the last.
 
 import argparse
 import ast
+import functools
 import json
 import random
 import sys
@@ -30,6 +31,12 @@ import bitmap8  # noqa: E402
 
 SIZE = 240
 SANS = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+
+
+@functools.cache
+def _sans(scale):
+    """DejaVu Sans with capitals as tall as the Hershey font's at scale (21 units)."""
+    return ImageFont.truetype(SANS, max(1, round(21 * scale / 0.73)))
 
 
 class Display:
@@ -66,7 +73,7 @@ class Display:
 
     def _glyph(self, ch):
         i = ord(ch) - 32
-        return (bitmap8.WIDTHS[i], bitmap8.GLYPHS[i]) if 0 <= i < 96 else (0, [])
+        return (bitmap8.WIDTHS[i], bitmap8.GLYPHS[i]) if 0 <= i < len(bitmap8.WIDTHS) else (0, [])
 
     def character(self, code, x, y, scale=2):
         width, cols = self._glyph(chr(code))
@@ -75,12 +82,9 @@ class Display:
                 if cols[cx] >> cy & 1:
                     self.rectangle(x + cx * scale, y + cy * scale, scale, scale)
 
-    def _sans(self, scale):
-        return ImageFont.truetype(SANS, max(1, round(21 * scale / 0.73)))
-
     def measure_text(self, s, scale=2, spacing=1):
         if self.font == "sans":
-            return int(self._sans(scale).getlength(s))
+            return int(_sans(scale).getlength(s))
         if not s:
             return 0
         return sum((self._glyph(c)[0] + spacing) * scale for c in s) - spacing * scale
@@ -88,7 +92,7 @@ class Display:
     def text(self, s, x, y, wrap=SIZE, scale=2, *_):
         s = str(s)
         if self.font == "sans":  # y is the Hershey origin: capitals' baseline 9 units below
-            self.draw.text((x, y + 9 * scale), s, fill=self.pen, font=self._sans(scale), anchor="ls")
+            self.draw.text((x, y + 9 * scale), s, fill=self.pen, font=_sans(scale), anchor="ls")
             return
         cx, cy = x, y
         for word in s.split(" "):

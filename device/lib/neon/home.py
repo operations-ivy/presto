@@ -19,6 +19,7 @@ SUMMON_X, SUMMON_Y = 130, 150  # left layout: a tap right of this and above that
 SIGN_W, SIGN_H = 44, 15  # its cabinet
 SIGN_LEGS = 5  # px of posts up from the highest roof under it; a post over a lower roof is longer
 SIGN_SLOP = 6  # px around it that still count as a tap on it
+SIGN_POST_INSET = 5  # px from each side of the cabinet to its post
 SIGN_ZONE = (120, 200)  # the buildings it may stand on: their middle, clear of the right tap band
 DEAD_TUBE = (52, 44, 66)  # unlit neon glass
 ARROW_SCALE = 1
@@ -127,15 +128,15 @@ class Home:
         self.glitch_at = time.ticks_add(time.ticks_ms(), 20000)
         self.frame = 0
         self.dirty = True
-        self.alert_box = None  # the pager's sign as last drawn (x, y, w, h), for taps; None: no pager
-        self.sign_pens = {
-            "frame": p.rgb(16, 12, 30),
-            "edge": p.rgb(40, 32, 64),
-            "dead": p.rgb(*DEAD_TUBE),
-        }
+        pg = getattr(ctx, "pager", None)
+        x, y, _ = self.alert_at
+        # the pager's sign (x, y, w, h), for taps; None: no pager, no sign
+        self.alert_box = (x, y, SIGN_W, SIGN_H + SIGN_LEGS) if pg is not None and pg.url else None
+        self.sign_frame, self.sign_edge, self.sign_dead = p.rgb(16, 12, 30), p.rgb(40, 32, 64), p.rgb(*DEAD_TUBE)
+        self.sign_lit = {}  # severity: (tube, halo, cabinet)
         for sev, name in pager.SEVERITY_PENS.items():
             core = theme.PALETTE[name]
-            self.sign_pens[sev] = (
+            self.sign_lit[sev] = (
                 p.rgb(*core),
                 p.rgb(*theme.mix(theme.PALETTE["night"], core, 0.35)),  # the halo
                 p.rgb(*theme.mix((16, 12, 30), core, 0.14)),  # the cabinet, lit from inside
@@ -202,6 +203,12 @@ class Home:
         """The top of the tallest building at column x (GROUND if none)."""
         return min([by for bx, by, bw, _ in self.buildings if bx <= x < bx + bw] or [GROUND])
 
+    def _perch(self, x):
+        """The pager's sign with its cabinet's left edge at x: (y, posts' x), its posts
+        SIGN_LEGS long over the highest roof under them."""
+        legs = (x + SIGN_POST_INSET, x + SIGN_W - SIGN_POST_INSET - 1)
+        return min(self._roof(lx) for lx in legs) - SIGN_LEGS - SIGN_H, legs
+
     def _place_alert_sign(self):
         """Where the pager's sign stands: (x, y, posts), on the tallest roofs in SIGN_ZONE
         clear of the name signs; posts are (x, length) down to whatever roof is under them."""
@@ -210,18 +217,16 @@ class Home:
         for x in range(lo_x, hi_x + 1, 2):
             if not SIGN_ZONE[0] <= x + SIGN_W // 2 <= SIGN_ZONE[1]:
                 continue
-            legs = (x + 5, x + SIGN_W - 6)
-            y = min(self._roof(lx) for lx in legs) - SIGN_LEGS - SIGN_H
+            y, legs = self._perch(x)
             if any(x - 2 <= x1 and x0 <= x + SIGN_W + 2 and y - 2 <= y1 for x0, y0, x1, y1 in self.sign_boxes):
                 continue  # a name sign's tower reaches up beside it
-            # the tallest perch, then the one whose posts are most even (it looks built there)
-            score = (y, sum(self._roof(lx) for lx in legs) - 2 * (y + SIGN_H))
+            post_length = sum(self._roof(lx) for lx in legs) - 2 * (y + SIGN_H)
+            score = (y, post_length)  # the tallest perch, then the most even posts (it looks built there)
             if best is None or score < best[0]:
                 best = (score, x, y, legs)
-        if best is None:
+        if best is None:  # every spot clashes with a name sign: stand over the zone's middle
             x = (SIGN_ZONE[0] + SIGN_ZONE[1]) // 2 - SIGN_W // 2
-            legs = (x + 5, x + SIGN_W - 6)
-            y = min(self._roof(lx) for lx in legs) - SIGN_LEGS - SIGN_H
+            y, legs = self._perch(x)
         else:
             _, x, y, legs = best
         return (x, y, tuple((lx, self._roof(lx) - (y + SIGN_H)) for lx in legs))
@@ -317,27 +322,24 @@ class Home:
         """The pager's billboard. All clear: ALERT in dark tubes. Firing: lit in the worst
         one's colour, with the count; a critical one buzzes. No answer for a while: the
         tubes stay dark and a "?" glows faintly. Nothing beeps."""
-        pg = getattr(self.ctx, "pager", None)
-        if pg is None or not pg.url:
-            self.alert_box = None
+        if self.alert_box is None:
             return
+        pg = self.ctx.pager
         x, y, posts = self.alert_at
-        self.alert_box = (x, y, SIGN_W, SIGN_H + SIGN_LEGS)
         badge = pager.badge(pg.data, pg.stale(now_ms))
-        sp = self.sign_pens
-        lit = sp.get(badge[1]) if badge else None
+        lit = self.sign_lit.get(badge[1]) if badge else None
         if lit and badge[1] == "critical" and (now_ms // 110) % 9 in (0, 3):
             lit = None  # a bad tube: it drops out, twice a second or so
         # posts down to the roofs, a catwalk, the cabinet, its frame, two lamps on top
-        d.set_pen(sp["edge"])
+        d.set_pen(self.sign_edge)
         for lx, length in posts:
             d.rectangle(lx, y + SIGN_H, 2, length)
         d.rectangle(x + 2, y + SIGN_H + 2, SIGN_W - 4, 1)
         d.rectangle(x + 9, y - 2, 1, 2)
         d.rectangle(x + SIGN_W - 10, y - 2, 1, 2)
-        d.set_pen(lit[2] if lit else sp["frame"])
+        d.set_pen(lit[2] if lit else self.sign_frame)
         d.rectangle(x, y, SIGN_W, SIGN_H)
-        d.set_pen(sp["edge"])
+        d.set_pen(self.sign_edge)
         d.rectangle(x, y, SIGN_W, 1)
         d.rectangle(x, y + SIGN_H - 1, SIGN_W, 1)
         d.rectangle(x, y, 1, SIGN_H)
@@ -351,7 +353,7 @@ class Home:
                 d.text(text, tx + ox, ty + oy, W, 1)
             d.set_pen(core)
         else:
-            d.set_pen(sp["dead"])
+            d.set_pen(self.sign_dead)
         d.text(text, tx, ty, W, 1)
         if badge and badge[0] == "?":
             d.set_pen(p.faint)
