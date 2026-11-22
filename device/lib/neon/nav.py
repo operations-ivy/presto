@@ -10,6 +10,7 @@ hidden button raised by a first tap). A two-finger tap goes Home from anywhere.
 import math
 
 HOME = "home"
+ALERTS = "alerts"  # the pager (presto#52): off the plus, opened from Home's badge
 OPPOSITE = {"up": "down", "down": "up", "left": "right", "right": "left"}
 EXTRA_HOME = "down"  # a screen off the plus (ALERTS, opened from Home's badge): its way Home
 

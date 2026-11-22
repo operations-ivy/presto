@@ -1,4 +1,4 @@
-"""presto-photos: `python -m presto_photos web|convert|sort|feed`.
+"""presto-photos: `python -m presto_photos web|convert|sort|feed|alerts`.
 
 feed: presto-feed, the Brick screen's JSON from Prometheus (feed.py); no store.
 alerts: presto-alerts, the pager's read and silence API in front of Alertmanager (alerts.py); no store.

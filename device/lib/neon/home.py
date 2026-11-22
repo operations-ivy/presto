@@ -193,7 +193,7 @@ class Home:
             and bx - BADGE_SLOP <= x < bx + bw + BADGE_SLOP
             and by - BADGE_SLOP <= y < by + bh + BADGE_SLOP
         ):
-            self.ctx.goto = "alerts"  # the loop switches (presto#52)
+            self.ctx.goto = nav.ALERTS  # the loop switches (presto#52)
             return
         if self.sights.minutes and x >= SUMMON_X and y < SUMMON_Y and self.sights.kind is None:
             self.sights.trigger(sightings.pick(self.sights.last, random.random()), now)  # summon one

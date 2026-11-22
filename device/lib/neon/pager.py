@@ -7,7 +7,7 @@ critical alert opens ALERTS by itself, once per alert; SILENCE asks the relay
 for a 1 hour silence. Nothing here makes a sound: the app's chirp does, only
 when chirp is on.
 
-badge(), criticals(), wrap() and ago() are pure (tested on the laptop); Pager does the fetch.
+badge(), criticals(), worst(), drop(), wrap() and ago() are pure (tested on the laptop); Pager does the fetch.
 """
 
 import time
@@ -32,6 +32,25 @@ def badge(data, stale):
 def criticals(data):
     """The ids of the critical alerts firing."""
     return [a["id"] for a in (data or {}).get("alerts", ()) if a.get("sev") == "critical"]
+
+
+def worst(alerts):
+    """The worst severity among alerts, or None."""
+    for sev in ("critical", "warning", "info"):
+        if any(a.get("sev") == sev for a in alerts):
+            return sev
+    return None
+
+
+def drop(data, alert_id):
+    """The relay's answer without one alert (just silenced). n counts every alert firing,
+    the list only the first few, so n goes down only if the alert was in the list."""
+    if not data:
+        return data
+    shown = data.get("alerts", [])
+    kept = [a for a in shown if a.get("id") != alert_id]
+    n = max(0, data.get("n", 0) - (len(shown) - len(kept)))
+    return dict(data, alerts=kept, n=n, worst=worst(kept) if n else None)
 
 
 def ago(seconds):
@@ -97,7 +116,7 @@ class Pager:
         return self.fetch(now_ms)
 
     def fetch(self, now_ms):
-        import requests
+        import requests  # here, not at the top: MicroPython's RAM, as uplink and ota do
 
         self.next_at = time.ticks_add(now_ms, self.every_ms)
         r = None
@@ -143,15 +162,5 @@ class Pager:
         finally:
             if r is not None:
                 r.close()
-        if self.data:  # gone from the list now; the next fetch agrees
-            kept = [a for a in self.data.get("alerts", ()) if a.get("id") != alert_id]
-            self.data = dict(self.data, alerts=kept, n=max(0, self.data.get("n", 0) - 1))
-            self.data["worst"] = _worst(kept) if self.data["n"] else None
+        self.data = drop(self.data, alert_id)  # gone from the list now; the next fetch agrees
         return True
-
-
-def _worst(alerts):
-    for sev in ("critical", "warning", "info"):
-        if any(a.get("sev") == sev for a in alerts):
-            return sev
-    return None

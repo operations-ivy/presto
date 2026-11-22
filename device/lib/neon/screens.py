@@ -738,7 +738,7 @@ class Alerts(Screen):
     is the bottom edge. Tap an alert for its summary and SILENCE (1 hour); tap anywhere
     else on the summary to go back to the list. ALL CLEAR when nothing fires."""
 
-    name = "alerts"
+    name = "alerts"  # nav.ALERTS
     frame_ms = 250  # the cursor blinks; nothing else moves
     ROW_Y, ROW_H, ROWS = 30, 21, 8
     BUTTON = (60, 172, 120, 26)  # SILENCE 1H: above the bottom band (the way Home)
@@ -749,8 +749,9 @@ class Alerts(Screen):
         self.pager = ctx.pager
         self.pick = None  # the alert shown in full, by id
         self.pending = None  # an id to silence on the next tick (it stalls ~3 s)
-        self.note, self.note_at = "", 0
-        self.dirty_drawn = False  # SILENCING is on screen: the stall can start
+        self.note, self.note_ok, self.note_at = "", False, 0
+        # draw() sets it once SILENCING is on screen; tick() then starts the ~3 s stall
+        self.dirty_drawn = False
 
     def enter(self):
         super().enter()
@@ -781,7 +782,7 @@ class Alerts(Screen):
         if self.pending is None or not self.dirty_drawn:
             return
         done = self.pager.silence(self.pending)
-        self.note, self.note_at = ("SILENCED 1H" if done else "SILENCE FAILED"), now_ms
+        self.note, self.note_ok, self.note_at = ("SILENCED 1H" if done else "SILENCE FAILED"), done, now_ms
         self.pending, self.dirty = None, True
         if done:
             self.pick = None
@@ -811,7 +812,7 @@ class Alerts(Screen):
             d.text("SILENCING", 170, 12, W, 1)
             self.dirty_drawn = True
         elif self.note and time.ticks_diff(now_ms, self.note_at) < 5000:
-            d.set_pen(p.phosphor if self.note.startswith("SILENCED") else p.red)
+            d.set_pen(p.phosphor if self.note_ok else p.red)
             d.text(self.note, 240 - 6 * len(self.note) - 8, 12, W, 1)
         elif self.pager.stale(now_ms):
             d.set_pen(p.red)
@@ -839,7 +840,8 @@ class Alerts(Screen):
             if (now_ms // 500) % 2:
                 d.rectangle(120 + d.measure_text("ALL CLEAR", 3) // 2 + 4, 96, 8, 21)
             return
-        for i, a in enumerate(rows[: self.ROWS]):
+        shown = rows[: self.ROWS]
+        for i, a in enumerate(shown):
             y = self.ROW_Y + i * self.ROW_H
             d.set_pen(self._pen(p, a.get("sev")))
             d.rectangle(12, y + 3, 4, self.ROW_H - 6)
@@ -848,7 +850,7 @@ class Alerts(Screen):
             d.set_pen(p.dim)
             when = pager.ago(a.get("for", 0) + since)
             d.text(when, 228 - 6 * len(when), y + 7, W, 1)
-        more = data.get("n", 0) - len(rows[: self.ROWS])
+        more = data.get("n", 0) - len(shown)
         if more > 0:
             d.set_pen(p.faint)
             d.text("+%d MORE" % more, 22, self.ROW_Y + self.ROWS * self.ROW_H, W, 1)

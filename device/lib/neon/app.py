@@ -93,8 +93,8 @@ def run(presto, secrets):
     ctx.arms = {"up": s["arm_up"], "left": s["arm_left"], "right": s["arm_right"], "down": s["arm_down"]}
     screens_by_name = dict(apps)
     screens_by_name[nav.HOME] = home.Home(ctx)
-    screens_by_name["alerts"] = screens.Alerts(ctx)  # off the plus: Home's badge opens it
-    plus = nav.Plus(ctx.arms, extras=("alerts",))
+    screens_by_name[nav.ALERTS] = screens.Alerts(ctx)  # off the plus: Home's badge opens it
+    plus = nav.Plus(ctx.arms, extras=(nav.ALERTS,))
 
     touch = presto.touch
     cur = screens_by_name[nav.HOME]
@@ -197,10 +197,10 @@ def run(presto, secrets):
             if ctx.pager.step(ctx.net, last_touch, now):
                 cur.dirty = True
                 # a new critical alert opens ALERTS by itself, once; it beeps only if chirp is on
-                if ctx.pager.take_critical() and plus.current != "alerts":
+                if ctx.pager.take_critical() and plus.current != nav.ALERTS:
                     chirp.enter_app()
-                    switch("alerts")
-                elif plus.current == "alerts":
+                    switch(nav.ALERTS)
+                elif plus.current == nav.ALERTS:
                     cur.leds(presto, now)
             ctx.ota.step(ctx.net, last_touch, now)
             if ctx.ota_shown:  # a download that didn't end in a restart: the LEDs come back

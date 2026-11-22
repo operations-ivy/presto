@@ -3,6 +3,7 @@ the silence, against a stub Alertmanager."""
 
 import json
 import threading
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -52,6 +53,14 @@ def test_summaries_are_one_short_line_and_odd_severities_are_info():
 def test_at_most_eight_are_listed_but_all_are_counted():
     out = alerts.trim([alert(f"A{i}") for i in range(12)], NOW)
     assert out["n"] == 12 and len(out["alerts"]) == alerts.MAX_ALERTS
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [(b'{"id": "fp-1"}', "fp-1"), (b"not json", None), (b'{"id": 3}', None), (b"[1]", None), (b"{}", None)],
+)
+def test_the_silence_body_is_just_an_id(raw, expected):
+    assert alerts.parse_silence_id(raw) == expected
 
 
 def test_a_silence_matches_exactly_that_alert_for_an_hour():

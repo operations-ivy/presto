@@ -84,9 +84,8 @@ def trim(alerts: list[dict[str, Any]], now: float) -> dict[str, Any]:
                 "sum": " ".join(summary.split())[:SUMMARY_CHARS],
             }
         )
-    worst = max((SEVERITIES[severity(a)] for a in shown), default=0)
-    names = {v: k for k, v in SEVERITIES.items()}
-    return {"at": int(now), "n": len(shown), "worst": names.get(worst), "alerts": rows}
+    worst = severity(shown[0]) if shown else None  # sorted worst first
+    return {"at": int(now), "n": len(shown), "worst": worst, "alerts": rows}
 
 
 def silence_for(alert: dict[str, Any], now: float, seconds: int = SILENCE_S) -> dict[str, Any]:
@@ -98,7 +97,7 @@ def silence_for(alert: dict[str, Any], now: float, seconds: int = SILENCE_S) -> 
         "startsAt": _iso(now),
         "endsAt": _iso(now + seconds),
         "createdBy": "presto",
-        "comment": "Silenced for %d minutes from the Presto's ALERTS screen (presto#52)" % (seconds // 60),
+        "comment": f"Silenced for {seconds // 60} minutes from the Presto's ALERTS screen (presto#52)",
     }
 
 
@@ -110,10 +109,11 @@ class Alertmanager:
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 body = json.load(resp)
-        except Exception:
+        except (OSError, ValueError):  # unreachable, an HTTP error, or not JSON
             REQUESTS.labels(name, "error").inc()
             raise
-        REQUESTS.labels(name, "ok").inc()
+        else:
+            REQUESTS.labels(name, "ok").inc()
         return body
 
     def alerts(self) -> list[dict[str, Any]]:
@@ -129,7 +129,16 @@ class Alertmanager:
         return self._call("silence", req).get("silenceID", "")
 
 
-def silence(am: Alertmanager, fingerprint: str, now: float) -> tuple[int, dict[str, Any]]:
+def parse_silence_id(raw: bytes) -> str | None:
+    """The alert's id from POST /silence's body ({"id": "<fingerprint>"}), or None."""
+    try:
+        fingerprint = json.loads(raw)["id"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    return fingerprint if isinstance(fingerprint, str) else None
+
+
+def silence_alert(am: Alertmanager, fingerprint: str, now: float) -> tuple[int, dict[str, Any]]:
     """Silence one firing alert by its fingerprint: (HTTP status, answer)."""
     alert = next((a for a in firing(am.alerts()) if a.get("fingerprint") == fingerprint), None)
     if alert is None:
@@ -158,7 +167,7 @@ def make_handler(am: Alertmanager):
         def answer(self, code: int, value: dict[str, Any]) -> None:
             self.send(code, json.dumps(value, separators=(",", ":")).encode())
 
-        def do_GET(self):
+        def do_GET(self) -> None:
             path = urlsplit(self.path).path
             if path in ("/health", "/ready"):
                 return self.send(200, b"ok\n", "text/plain")
@@ -173,20 +182,17 @@ def make_handler(am: Alertmanager):
                     return self.answer(502, {"error": "alertmanager unreachable"})
             return self.answer(404, {"error": "not found"})
 
-        def do_POST(self):
+        def do_POST(self) -> None:
             if urlsplit(self.path).path != "/silence":
                 return self.answer(404, {"error": "not found"})
             length = int(self.headers.get("Content-Length") or 0)
             if not 0 < length <= MAX_BODY:
                 return self.answer(400, {"error": "a JSON body with the alert's id"})
-            try:
-                fingerprint = json.loads(self.rfile.read(length))["id"]
-                if not isinstance(fingerprint, str):
-                    raise TypeError(fingerprint)
-            except (ValueError, KeyError, TypeError):
+            fingerprint = parse_silence_id(self.rfile.read(length))
+            if fingerprint is None:
                 return self.answer(400, {"error": "a JSON body with the alert's id"})
             try:
-                return self.answer(*silence(am, fingerprint, time.time()))
+                return self.answer(*silence_alert(am, fingerprint, time.time()))
             except (OSError, ValueError) as e:
                 log.warning("silence failed", error=repr(e))
                 return self.answer(502, {"error": "alertmanager unreachable"})
