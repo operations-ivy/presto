@@ -5,8 +5,8 @@ import time
 from neon import card, conf, fx, nav, roomhttp, services, theme, uplink
 
 DEFAULTS = {
-    "idle_seconds": 14400,  # 4 h with no touch: go to idle_screen
-    "idle_screen": "photos",
+    "idle_seconds": 14400,  # 4 h with no touch: go to idle_screen, if one is set
+    "idle_screen": None,  # stay put: Photos only when opened by hand (the user, 2026-11-21)
     "photo_seconds": 300,  # a new photo every 5 minutes
     "units": "imperial",
     "clock_24h": False,
