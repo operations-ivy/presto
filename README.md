@@ -13,8 +13,10 @@ cluster feed its slideshow.
                    ^
   [ PHOTOS ] <  [ HOME ]  > [ BRICK ]
                    v
-                [ ??? ]
+                [ LIGHTS ]
 ```
+
+ALERTS (the pager) is off the plus: Home's badge opens it.
 
 Navigation is by taps (swipes do nothing): each edge has a 64 px tap band.
 
@@ -22,8 +24,10 @@ Navigation is by taps (swipes do nothing): each edge has a 64 px tap band.
 | --- | --- |
 | On Home, tap an edge (by its small green arrow) | opens that arm's app |
 | In an app, tap the edge facing Home (its small arrow) | goes Home |
+| On Home, tap the alert badge (top right, only while something fires) | opens ALERTS |
+| In ALERTS, tap the bottom edge | goes Home |
 | Two-finger tap | Home, from anywhere |
-| Any other tap | the app's own action (Photos: right half next, left half previous; Home: glitch) |
+| Any other tap | the app's own action (Photos: right half next, left half previous; Home: glitch; ALERTS: an alert's summary, SILENCE 1H, back to the list) |
 | No touch for `idle_seconds` | nothing by default: Photos opens only by hand (the user, 2026-11-21); an `idle_screen` goes there |
 
 Sound is off by default (`chirp: false`); turned on, it's soft two-note
@@ -58,6 +62,17 @@ chimes with a bell envelope at `chirp_volume`.
   light, and `hue.send` refuses a list, a group, `all` or a light not in
   settings. The app opens on the first light (office) each time. It talks to `ha_url` (plain HTTP on the LAN: a TLS connect stalls the
   Presto ~3 s) as Home Assistant's Presto user, `HA_TOKEN` in `secrets.py`.
+- **ALERTS** (presto#52): the homelab's pager, from Alertmanager through
+  presto-alerts (below), never the phone. What's firing, worst first: a
+  severity bar (red critical, amber warning, cyan info), the name and how long
+  it has been firing. Tap one for its summary and SILENCE 1H, an Alertmanager
+  silence of exactly that alert for an hour, made by `presto`. ALL CLEAR when
+  nothing fires, STALE when the relay hasn't answered for 15 minutes. Home
+  shows a badge with the count in the worst one's colour (a critical one
+  breathes; `?` when stale), and a new critical alert opens ALERTS by itself,
+  once. Silent unless `chirp` is on. It asks every `alerts_minutes` (2), only
+  when nobody has touched the screen for 15 s: each ask is a ~3 s TLS stall.
+  `alerts_url` empty turns it off.
   (The old SIGNAL LOST screen is still `fun`.)
 - **Transitions**: TV static. The old screen breaks up into noise bars and
   tear lines, and the new one tunes in as the static thins out. The backlight
@@ -83,12 +98,13 @@ art in `device/lib/neon/sprites.py`, like brick-status's `tools/pixel_art.py`).
 | --- | --- |
 | `device/main.py` | runs on boot: sets the hostname, `Presto(full_res=True)`, the app |
 | `device/lib/neon/` | the app. `app.py` loop, `home.py`, `screens.py`; pure modules (`nav`, `tz`, `conf`, `wx`, `sprites`) are tested on CPython |
+| `device/lib/neon/pager.py` | the pager's fetch, badge and silence (presto#52) |
 | `device/lib/neon/roomhttp.py` | `/room.json` and `/metrics` on port 8767 (presto#8) |
 | `device/lib/neon/weatherfx.py` | the Weather screen's animated sky (presto#23) |
 | `device/settings.yaml` | settings (flat `key: value`; read by `neon/conf.py`) |
 | `tools/deploy` | copy `device/` to the Presto over USB and restart it |
 | `tools/presto-photos` | iPhone HEIC/JPEG to 480x480 baseline sRGB JPEGs (the pipeline's first draft) |
-| `presto_photos/` | the cluster side: upload page (`web.py`), photo converter (`worker.py`), media sorter (`sorter.py`), presto-feed |
+| `presto_photos/` | the cluster side: upload page (`web.py`), photo converter (`worker.py`), media sorter (`sorter.py`), presto-feed, presto-alerts (`alerts.py`: the pager's `GET /alerts` and `POST /silence` in front of Alertmanager, behind `presto.brick.nozdormu.cloud`, NetworkPolicy to Alertmanager only) |
 | `presto_photos/media.py` | media kinds and clean names (pure) |
 | `presto_photos/devices.py` | device tags and each device's sync manifest (pure) |
 | `k8s_config/` | the `presto` namespace for Argo CD; `devices.yaml` is the media device tags |

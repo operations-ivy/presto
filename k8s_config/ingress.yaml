@@ -10,6 +10,21 @@ spec:
   - host: presto.brick.nozdormu.cloud
     http:
       paths:
+      # The pager (presto-alerts, presto#52): what's firing, and a 1 hour silence.
+      - path: /alerts
+        pathType: Exact
+        backend:
+          service:
+            name: presto-alerts
+            port:
+              number: 80
+      - path: /silence
+        pathType: Exact
+        backend:
+          service:
+            name: presto-alerts
+            port:
+              number: 80
       # The Brick screen's feed (presto-feed); everything else is the photo page.
       - path: /brick.json
         pathType: Exact

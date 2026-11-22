@@ -11,6 +11,7 @@ import math
 
 HOME = "home"
 OPPOSITE = {"up": "down", "down": "up", "left": "right", "right": "left"}
+EXTRA_HOME = "down"  # a screen off the plus (ALERTS, opened from Home's badge): its way Home
 
 # Tunables, in screen pixels (240x240, as touch reports them) and milliseconds.
 TAP_MAX_MOVE = 15
@@ -56,17 +57,19 @@ def zone(x, y, size=240):
 
 
 class Plus:
-    def __init__(self, arms):
-        """arms: {'up': name, 'down': name, 'left': name, 'right': name}."""
+    def __init__(self, arms, extras=()):
+        """arms: {'up': name, 'down': name, 'left': name, 'right': name}. extras: screens
+        off the plus, opened from Home by other means (ALERTS: Home's badge)."""
         self.arms = dict(arms)
         self.where = {v: k for k, v in self.arms.items()}  # app name -> arm
+        self.extras = set(extras) - set(self.where)
         self.current = HOME
 
     def swipe(self, direction):
         """Apply a swipe; returns the new screen name, or None for a bump."""
         if self.current == HOME:
             target = self.arms.get(direction)
-        elif direction == OPPOSITE[self.where[self.current]]:
+        elif direction == self.home_tab():
             target = HOME
         else:
             target = None
@@ -97,11 +100,13 @@ class Plus:
     def home_tab(self, name=None):
         """The edge an app's way Home sits on: the one facing back toward Home."""
         name = name or self.current
-        return None if name == HOME else OPPOSITE[self.where[name]]
+        if name == HOME:
+            return None
+        return EXTRA_HOME if name in self.extras else OPPOSITE[self.where[name]]
 
     def go(self, name):
         """Jump straight to a screen (Home, or an app: the idle timeout)."""
-        if name != HOME and name not in self.where:
+        if name != HOME and name not in self.where and name not in self.extras:
             raise ValueError(name)
         self.current = name
         return name
@@ -109,8 +114,8 @@ class Plus:
     def entry_direction(self, name):
         """Which way the screen slides in when moving to `name` from the current one."""
         if name == HOME:
-            return OPPOSITE[self.where[self.current]] if self.current != HOME else None
-        return self.where[name]
+            return self.home_tab() if self.current != HOME else None
+        return self.where.get(name, OPPOSITE[EXTRA_HOME])
 
 
 # --- Home's arrows (presto#29) ---

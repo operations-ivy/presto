@@ -3,7 +3,7 @@
 import random
 import time
 
-from neon import fx, nav, sightings, sprites, theme, tz, wx
+from neon import fx, nav, pager, sightings, sprites, theme, tz, wx
 
 W = H = 240  # the Presto at its native speed: 240x240, doubled to the 480 panel
 SKY_BOTTOM = 165
@@ -14,6 +14,8 @@ RAINBOW_MS = 20000  # Home's LEDs: the rainbow's drift, ms per unit of hue
 SMALL_PX = 10  # left-aligned Home's date and forecast: capitals 10 px, 1.25x the pixel font's 8
 LEFT = 14  # home_align: left: the text's margin, clear of the left arrow (y 137+)
 SUMMON_X, SUMMON_Y = 130, 150  # left layout: a tap right of this and above that summons a sighting
+BADGE = (178, 36, 28, 15)  # the pager's badge (presto#52), clear of the top and right tap bands
+BADGE_SLOP = 8  # px around it that still count as a tap on it
 ARROW_SCALE = 1
 _AW, _AH = 9 * ARROW_SCALE, 5 * ARROW_SCALE  # sprites.ARROW pointing up: 9x5, quiet beside the city
 ARROW_AT = {  # top-left corners; left and right sit below the forecast
@@ -118,6 +120,7 @@ class Home:
         self.glitch_at = time.ticks_add(time.ticks_ms(), 20000)
         self.frame = 0
         self.dirty = True
+        self.badge = None  # the pager's badge as last drawn: (text, severity), or None
 
     def _place_signs(self, ctx, p, r):
         """Neon signs from SIGNS in secrets.py (device only: names stay off the public repo).
@@ -184,6 +187,14 @@ class Home:
 
     def tap(self, x, y):
         now = time.ticks_ms()
+        bx, by, bw, bh = BADGE
+        if (
+            self.badge is not None
+            and bx - BADGE_SLOP <= x < bx + bw + BADGE_SLOP
+            and by - BADGE_SLOP <= y < by + bh + BADGE_SLOP
+        ):
+            self.ctx.goto = "alerts"  # the loop switches (presto#52)
+            return
         if self.sights.minutes and x >= SUMMON_X and y < SUMMON_Y and self.sights.kind is None:
             self.sights.trigger(sightings.pick(self.sights.last, random.random()), now)  # summon one
         else:
@@ -255,6 +266,30 @@ class Home:
         self._clock(d, p, now_ms)
         self._forecast(d, p)
         self._arms(d, p, now_ms)
+        self._badge(d, p, now_ms)
+
+    def _badge(self, d, p, now_ms):
+        """The pager's badge: how many alerts fire, in the worst one's colour; "?" when
+        the relay hasn't answered for a while; nothing when all is clear."""
+        pg = getattr(self.ctx, "pager", None)
+        self.badge = pager.badge(pg.data, pg.stale(now_ms)) if pg is not None and pg.url else None
+        if self.badge is None:
+            return
+        text, sev = self.badge
+        x, y, w, h = BADGE
+        pen = getattr(p, pager.SEVERITY_PENS.get(sev, "faint")) if sev else p.faint
+        d.set_pen(p.night)
+        d.rectangle(x, y, w, h)
+        d.set_pen(pen)
+        if sev == "critical" and (now_ms // 600) % 2:  # a critical one breathes; nothing beeps
+            d.rectangle(x, y, w, h)
+            d.set_pen(p.night)
+        else:
+            d.rectangle(x, y, w, 1)
+            d.rectangle(x, y + h - 1, w, 1)
+            d.rectangle(x, y, 1, h)
+            d.rectangle(x + w - 1, y, 1, h)
+        d.text(text, x + (w - d.measure_text(text, 1)) // 2, y + 4, w, 1)
 
     def _car(self, d, p, now_ms):
         if self.car_x is None:

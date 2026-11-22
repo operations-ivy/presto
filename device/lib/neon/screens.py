@@ -5,7 +5,7 @@ import os
 import random
 import time
 
-from neon import card, fx, hue, theme, uplink, weatherfx, wx
+from neon import card, fx, hue, pager, theme, uplink, weatherfx, wx
 
 W = H = 240
 
@@ -141,6 +141,7 @@ class Weather(Screen):
         """Today like a forecast panel: HIGH, LOW and RAIN in three cells."""
         x0, y0, w, h = 12, 96, 216, 36
         self._panel(d, p, x0, y0, w, h, p.line)
+
         def num(key, fmt="%d"):
             v = s.get(key) if s else None
             return "--" if v is None else fmt % round(v)
@@ -729,3 +730,144 @@ class Lights(Screen):
                     fx.glitch_text(d, p, text, x, 104, 2, 2)
                 else:
                     fx.neon_text(d, p, text, x, 104, 2, p.phosphor if ok else p.red, p.phosphor_dim if ok else p.line)
+
+
+class Alerts(Screen):
+    """The pager (presto#52): what's firing in Alertmanager, worst first, from presto-alerts.
+    Opened from Home's badge (or by a new critical alert, once); off the plus, its way Home
+    is the bottom edge. Tap an alert for its summary and SILENCE (1 hour); tap anywhere
+    else on the summary to go back to the list. ALL CLEAR when nothing fires."""
+
+    name = "alerts"
+    frame_ms = 250  # the cursor blinks; nothing else moves
+    ROW_Y, ROW_H, ROWS = 30, 21, 8
+    BUTTON = (60, 172, 120, 26)  # SILENCE 1H: above the bottom band (the way Home)
+    COLS = 31  # characters per line at scale 1 in the panel
+
+    def __init__(self, ctx):
+        super().__init__(ctx)
+        self.pager = ctx.pager
+        self.pick = None  # the alert shown in full, by id
+        self.pending = None  # an id to silence on the next tick (it stalls ~3 s)
+        self.note, self.note_at = "", 0
+        self.dirty_drawn = False  # SILENCING is on screen: the stall can start
+
+    def enter(self):
+        super().enter()
+        self.pick = None
+
+    def _alerts(self):
+        return (self.pager.data or {}).get("alerts", [])
+
+    def _picked(self):
+        return next((a for a in self._alerts() if a.get("id") == self.pick), None)
+
+    def tap(self, x, y):
+        self.dirty = True
+        alert = self._picked()
+        if alert is not None:
+            bx, by, bw, bh = self.BUTTON
+            if bx <= x < bx + bw and by <= y < by + bh and self.pending is None:
+                self.pending = alert["id"]
+            else:
+                self.pick = None
+            return
+        i = (y - self.ROW_Y) // self.ROW_H
+        rows = self._alerts()[: self.ROWS]
+        if y >= self.ROW_Y and 0 <= i < len(rows):
+            self.pick = rows[i]["id"]
+
+    def tick(self, now_ms):
+        if self.pending is None or not self.dirty_drawn:
+            return
+        done = self.pager.silence(self.pending)
+        self.note, self.note_at = ("SILENCED 1H" if done else "SILENCE FAILED"), now_ms
+        self.pending, self.dirty = None, True
+        if done:
+            self.pick = None
+
+    def leds(self, presto, t):
+        data = self.pager.data or {}
+        hue_ = pager.SEVERITY_HUES.get(data.get("worst")) if data.get("n") else None
+        for i in range(7):
+            if hue_ is None:
+                presto.set_led_rgb(i, 0, 40, 10)  # all clear: a faint green
+            else:
+                presto.set_led_hsv(i, hue_, 1.0, 1.0)
+
+    def _pen(self, p, sev):
+        return getattr(p, pager.SEVERITY_PENS.get(sev, "cyan"))
+
+    def draw(self, d, now_ms):
+        p = self.ctx.pens
+        d.set_pen(p.night)
+        d.clear()
+        d.set_pen(p.magenta)
+        d.text("ALERTS", 12, 8, W, 2)
+        data = self.pager.data
+        age = self.pager.age_s(now_ms)
+        if self.pending is not None:
+            d.set_pen(p.amber)
+            d.text("SILENCING", 170, 12, W, 1)
+            self.dirty_drawn = True
+        elif self.note and time.ticks_diff(now_ms, self.note_at) < 5000:
+            d.set_pen(p.phosphor if self.note.startswith("SILENCED") else p.red)
+            d.text(self.note, 240 - 6 * len(self.note) - 8, 12, W, 1)
+        elif self.pager.stale(now_ms):
+            d.set_pen(p.red)
+            d.text("STALE", 196, 12, W, 1)
+        elif data:
+            d.set_pen(p.faint)
+            d.text("%d FIRING" % data.get("n", 0), 170, 12, W, 1)
+        d.set_pen(p.line)
+        d.rectangle(12, 26, 216, 1)
+        if self.pending is None:
+            self.dirty_drawn = False
+        if data is None:
+            d.set_pen(p.faint)
+            d.text("NO UPLINK YET" if self.pager.url else "PAGER OFF (alerts_url)", 12, 100, 216, 2)
+            return
+        since = age or 0
+        alert = self._picked()
+        if alert is not None:
+            self._detail(d, p, alert, since)
+            return
+        rows = data.get("alerts", [])
+        if not rows:
+            d.set_pen(p.phosphor)
+            d.text("ALL CLEAR", 120 - d.measure_text("ALL CLEAR", 3) // 2, 96, W, 3)
+            if (now_ms // 500) % 2:
+                d.rectangle(120 + d.measure_text("ALL CLEAR", 3) // 2 + 4, 96, 8, 21)
+            return
+        for i, a in enumerate(rows[: self.ROWS]):
+            y = self.ROW_Y + i * self.ROW_H
+            d.set_pen(self._pen(p, a.get("sev")))
+            d.rectangle(12, y + 3, 4, self.ROW_H - 6)
+            d.set_pen(p.text)
+            d.text(uplink._short(a.get("name", "?"), 26), 22, y + 7, 190, 1)
+            d.set_pen(p.dim)
+            when = pager.ago(a.get("for", 0) + since)
+            d.text(when, 228 - 6 * len(when), y + 7, W, 1)
+        more = data.get("n", 0) - len(rows[: self.ROWS])
+        if more > 0:
+            d.set_pen(p.faint)
+            d.text("+%d MORE" % more, 22, self.ROW_Y + self.ROWS * self.ROW_H, W, 1)
+
+    def _detail(self, d, p, a, since):
+        sev = a.get("sev", "info")
+        d.set_pen(self._pen(p, sev))
+        d.rectangle(12, 34, 4, 40)
+        d.text(uplink._short(a.get("name", "?"), 17), 22, 34, 206, 2)
+        d.set_pen(p.dim)
+        d.text("{}  FOR {}".format(sev.upper(), pager.ago(a.get("for", 0) + since)), 22, 56, W, 1)
+        d.set_pen(p.text)
+        for i, line in enumerate(pager.wrap(a.get("sum") or "(no summary)", self.COLS)[:8]):
+            d.text(line, 22, 80 + i * 11, 206, 1)
+        bx, by, bw, bh = self.BUTTON
+        d.set_pen(p.magenta)
+        d.rectangle(bx, by, bw, bh)
+        d.set_pen(p.night)
+        d.rectangle(bx + 2, by + 2, bw - 4, bh - 4)
+        d.set_pen(p.magenta)
+        label = "SILENCE 1H"
+        d.text(label, bx + (bw - d.measure_text(label, 2)) // 2, by + 6, W, 2)
