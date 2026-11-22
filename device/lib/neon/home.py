@@ -14,8 +14,14 @@ RAINBOW_MS = 20000  # Home's LEDs: the rainbow's drift, ms per unit of hue
 SMALL_PX = 10  # left-aligned Home's date and forecast: capitals 10 px, 1.25x the pixel font's 8
 LEFT = 14  # home_align: left: the text's margin, clear of the left arrow (y 137+)
 SUMMON_X, SUMMON_Y = 130, 150  # left layout: a tap right of this and above that summons a sighting
-BADGE = (178, 36, 28, 15)  # the pager's badge (presto#52), clear of the top and right tap bands
-BADGE_SLOP = 8  # px around it that still count as a tap on it
+# The pager's sign (presto#52): a rooftop billboard reading ALERT, dark tubes while all is
+# clear, lit in the worst alert's colour with the count while one fires (the user, 2026-11-22).
+SIGN_W, SIGN_H = 44, 15  # its cabinet
+SIGN_LEGS = 5  # px of posts up from the highest roof under it; a post over a lower roof is longer
+SIGN_SLOP = 6  # px around it that still count as a tap on it
+SIGN_POST_INSET = 5  # px from each side of the cabinet to its post
+SIGN_ZONE = (120, 200)  # the buildings it may stand on: their middle, clear of the right tap band
+DEAD_TUBE = (52, 44, 66)  # unlit neon glass
 ARROW_SCALE = 1
 _AW, _AH = 9 * ARROW_SCALE, 5 * ARROW_SCALE  # sprites.ARROW pointing up: 9x5, quiet beside the city
 ARROW_AT = {  # top-left corners; left and right sit below the forecast
@@ -49,6 +55,7 @@ class Home:
         self.buildings = [[b[0] // 2, b[1] // 2, (b[2] + 1) // 2, (b[3] + 1) // 2] for b in self.buildings]
         self.sign_boxes = [tuple(v // 2 for v in box) for box in self.sign_boxes]
         self.signs = [(sg[0], sg[1] // 2, sg[2] // 2) + tuple(sg[3:]) for sg in self.signs]
+        self.alert_at = self._place_alert_sign()
         self.windows = []
         for bx, by, bw, bh in self.buildings:
             for wy in range(by + 3, GROUND - 3, 5):
@@ -109,6 +116,7 @@ class Home:
         self.daylight = ctx.settings.get("home_sky") == "daylight"  # the user, 2026-11-05: night only
         self.building_pen = p.rgb(10, 8, 20)
         self.building_edge = p.rgb(24, 18, 44)
+        self.raceway_pen = p.rgb(20, 15, 34)  # behind a horizontal sign's letters
         self.win_pens = (p.sodium, p.amber, p.cyan)
         # the glyph rain: (glyph, its darker trail), dim far away, bright close up
         self.rain_pens = (
@@ -120,7 +128,19 @@ class Home:
         self.glitch_at = time.ticks_add(time.ticks_ms(), 20000)
         self.frame = 0
         self.dirty = True
-        self.badge = None  # the pager's badge as last drawn: (text, severity), or None
+        pg = getattr(ctx, "pager", None)
+        x, y, _ = self.alert_at
+        # the pager's sign (x, y, w, h), for taps; None: no pager, no sign
+        self.alert_box = (x, y, SIGN_W, SIGN_H + SIGN_LEGS) if pg is not None and pg.url else None
+        self.sign_frame, self.sign_edge, self.sign_dead = p.rgb(16, 12, 30), p.rgb(40, 32, 64), p.rgb(*DEAD_TUBE)
+        self.sign_lit = {}  # severity: (tube, halo, cabinet)
+        for sev, name in pager.SEVERITY_PENS.items():
+            core = theme.PALETTE[name]
+            self.sign_lit[sev] = (
+                p.rgb(*core),
+                p.rgb(*theme.mix(theme.PALETTE["night"], core, 0.35)),  # the halo
+                p.rgb(*theme.mix((16, 12, 30), core, 0.14)),  # the cabinet, lit from inside
+            )
 
     def _place_signs(self, ctx, p, r):
         """Neon signs from SIGNS in secrets.py (device only: names stay off the public repo).
@@ -163,6 +183,7 @@ class Home:
                 if b[2] < tw + 16:  # widen it, keeping its centre
                     b[0] -= (tw + 16 - b[2]) // 2
                     b[2] = tw + 16
+                b[0] = max(8, min(472 - b[2], b[0]))  # its sign on screen, clear of the edges
                 h = max(70, (tallest_v or 120) - 28)  # slightly shorter than the towers
                 b[3], b[1] = h, 452 - h
                 sx, sy = b[0] + (b[2] - tw) // 2, b[1] + 10
@@ -178,6 +199,38 @@ class Home:
             signs.append((name, sx, sy, tubes[i % 4], halos[i % 4], r(0, 52), slot, orient))
         return signs
 
+    def _roof(self, x):
+        """The top of the tallest building at column x (GROUND if none)."""
+        return min([by for bx, by, bw, _ in self.buildings if bx <= x < bx + bw] or [GROUND])
+
+    def _perch(self, x):
+        """The pager's sign with its cabinet's left edge at x: (y, posts' x), its posts
+        SIGN_LEGS long over the highest roof under them."""
+        legs = (x + SIGN_POST_INSET, x + SIGN_W - SIGN_POST_INSET - 1)
+        return min(self._roof(lx) for lx in legs) - SIGN_LEGS - SIGN_H, legs
+
+    def _place_alert_sign(self):
+        """Where the pager's sign stands: (x, y, posts), on the tallest roofs in SIGN_ZONE
+        clear of the name signs; posts are (x, length) down to whatever roof is under them."""
+        lo_x, hi_x = nav.EDGE + 2, W - nav.EDGE - 2 - SIGN_W
+        best = None
+        for x in range(lo_x, hi_x + 1, 2):
+            if not SIGN_ZONE[0] <= x + SIGN_W // 2 <= SIGN_ZONE[1]:
+                continue
+            y, legs = self._perch(x)
+            if any(x - 2 <= x1 and x0 <= x + SIGN_W + 2 and y - 2 <= y1 for x0, y0, x1, y1 in self.sign_boxes):
+                continue  # a name sign's tower reaches up beside it
+            post_length = sum(self._roof(lx) for lx in legs) - 2 * (y + SIGN_H)
+            score = (y, post_length)  # the tallest perch, then the most even posts (it looks built there)
+            if best is None or score < best[0]:
+                best = (score, x, y, legs)
+        if best is None:  # every spot clashes with a name sign: stand over the zone's middle
+            x = (SIGN_ZONE[0] + SIGN_ZONE[1]) // 2 - SIGN_W // 2
+            y, legs = self._perch(x)
+        else:
+            _, x, y, legs = best
+        return (x, y, tuple((lx, self._roof(lx) - (y + SIGN_H)) for lx in legs))
+
     # --- lifecycle ---
     def enter(self):
         self.entered_at = time.ticks_ms()
@@ -187,14 +240,11 @@ class Home:
 
     def tap(self, x, y):
         now = time.ticks_ms()
-        bx, by, bw, bh = BADGE
-        if (
-            self.badge is not None
-            and bx - BADGE_SLOP <= x < bx + bw + BADGE_SLOP
-            and by - BADGE_SLOP <= y < by + bh + BADGE_SLOP
-        ):
-            self.ctx.goto = nav.ALERTS  # the loop switches (presto#52)
-            return
+        if self.alert_box is not None:
+            bx, by, bw, bh = self.alert_box
+            if bx - SIGN_SLOP <= x < bx + bw + SIGN_SLOP and by - SIGN_SLOP <= y < by + bh + SIGN_SLOP:
+                self.ctx.goto = nav.ALERTS  # the loop switches (presto#52), lit or not
+                return
         if self.sights.minutes and x >= SUMMON_X and y < SUMMON_Y and self.sights.kind is None:
             self.sights.trigger(sightings.pick(self.sights.last, random.random()), now)  # summon one
         else:
@@ -254,6 +304,7 @@ class Home:
                 d.set_pen(self.win_pens[c])
                 d.rectangle(wx_, wy, 2, 2)
         self._sign(d, p, now_ms)
+        self._alert_sign(d, p, now_ms)
         self.sights.front(d, now_ms)  # over the rooftops
         d.set_pen(p.night)
         d.rectangle(0, GROUND, W, H - GROUND)
@@ -266,30 +317,47 @@ class Home:
         self._clock(d, p, now_ms)
         self._forecast(d, p)
         self._arms(d, p, now_ms)
-        self._badge(d, p, now_ms)
 
-    def _badge(self, d, p, now_ms):
-        """The pager's badge: how many alerts fire, in the worst one's colour; "?" when
-        the relay hasn't answered for a while; nothing when all is clear."""
-        pg = getattr(self.ctx, "pager", None)
-        self.badge = pager.badge(pg.data, pg.stale(now_ms)) if pg is not None and pg.url else None
-        if self.badge is None:
+    def _alert_sign(self, d, p, now_ms):
+        """The pager's billboard. All clear: ALERT in dark tubes. Firing: lit in the worst
+        one's colour, with the count; a critical one buzzes. No answer for a while: the
+        tubes stay dark and a "?" glows faintly. Nothing beeps."""
+        if self.alert_box is None:
             return
-        text, sev = self.badge
-        x, y, w, h = BADGE
-        pen = getattr(p, pager.SEVERITY_PENS.get(sev, "faint")) if sev else p.faint
-        d.set_pen(p.night)
-        d.rectangle(x, y, w, h)
-        d.set_pen(pen)
-        if sev == "critical" and (now_ms // 600) % 2:  # a critical one breathes; nothing beeps
-            d.rectangle(x, y, w, h)
-            d.set_pen(p.night)
+        pg = self.ctx.pager
+        x, y, posts = self.alert_at
+        badge = pager.badge(pg.data, pg.stale(now_ms))
+        lit = self.sign_lit.get(badge[1]) if badge else None
+        if lit and badge[1] == "critical" and (now_ms // 110) % 9 in (0, 3):
+            lit = None  # a bad tube: it drops out, twice a second or so
+        # posts down to the roofs, a catwalk, the cabinet, its frame, two lamps on top
+        d.set_pen(self.sign_edge)
+        for lx, length in posts:
+            d.rectangle(lx, y + SIGN_H, 2, length)
+        d.rectangle(x + 2, y + SIGN_H + 2, SIGN_W - 4, 1)
+        d.rectangle(x + 9, y - 2, 1, 2)
+        d.rectangle(x + SIGN_W - 10, y - 2, 1, 2)
+        d.set_pen(lit[2] if lit else self.sign_frame)
+        d.rectangle(x, y, SIGN_W, SIGN_H)
+        d.set_pen(self.sign_edge)
+        d.rectangle(x, y, SIGN_W, 1)
+        d.rectangle(x, y + SIGN_H - 1, SIGN_W, 1)
+        d.rectangle(x, y, 1, SIGN_H)
+        d.rectangle(x + SIGN_W - 1, y, 1, SIGN_H)
+        text = "ALERT" if not badge or badge[0] == "?" else "ALERT " + badge[0]
+        tx, ty = x + (SIGN_W - d.measure_text(text, 1)) // 2, y + 4
+        if lit:
+            core, halo, _ = lit
+            d.set_pen(halo)
+            for ox, oy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                d.text(text, tx + ox, ty + oy, W, 1)
+            d.set_pen(core)
         else:
-            d.rectangle(x, y, w, 1)
-            d.rectangle(x, y + h - 1, w, 1)
-            d.rectangle(x, y, 1, h)
-            d.rectangle(x + w - 1, y, 1, h)
-        d.text(text, x + (w - d.measure_text(text, 1)) // 2, y + 4, w, 1)
+            d.set_pen(self.sign_dead)
+        d.text(text, tx, ty, W, 1)
+        if badge and badge[0] == "?":
+            d.set_pen(p.faint)
+            d.text("?", x + SIGN_W - 6, ty, W, 1)
 
     def _car(self, d, p, now_ms):
         if self.car_x is None:
@@ -311,12 +379,14 @@ class Home:
             if (tick + phase) % 53 in (0, 2):
                 continue
             if orient == "h":
+                # the letters lit the way the towers' are, on a dark raceway bolted to the wall
+                tw = d.measure_text(name, 1)
+                d.set_pen(self.raceway_pen)
+                d.rectangle(sx - 3, sy + 2, tw + 6, 4)
                 d.set_pen(halo)
                 d.text(name, sx - 1, sy - 1, W, 1)
-                d.rectangle(sx - 2, sy + 9, len(name) * 6 + 2, 1)
                 d.set_pen(tube)
                 d.text(name, sx, sy, W, 1)
-                d.rectangle(sx - 1, sy + 9, len(name) * 6, 1)  # the tube's underline
                 continue
             for i, ch in enumerate(name):
                 d.set_pen(halo)
