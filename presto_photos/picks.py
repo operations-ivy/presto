@@ -37,6 +37,9 @@ class Picks:
         devices = doc.get("devices") if isinstance(doc, dict) else None
         return devices if isinstance(devices, dict) else {}
 
+    def _write(self, devices: dict) -> None:
+        write_atomic(self.path, json.dumps({"version": 1, "devices": devices}).encode())
+
     def get(self, device: str) -> set[str] | None:
         """The device's picked paths, or None: never picked, so everything."""
         entry = self._all().get(device)
@@ -59,9 +62,9 @@ class Picks:
             saved = [name for name, entry in devices.items() if isinstance(entry, dict) and "paths" in entry]
             if len(saved) != 1:
                 return None
-            devices = {SHARED: devices[saved[0]]}
-            write_atomic(self.path, json.dumps({"version": 1, "devices": devices}).encode())
-            return saved[0]
+            (name,) = saved
+            self._write({SHARED: devices[name]})
+            return name
 
     def set(self, device: str, paths: set[str] | None, now: float | None = None) -> None:
         """Save the device's picks; None forgets them (back to everything)."""
@@ -71,7 +74,7 @@ class Picks:
                 devices.pop(device, None)
             else:
                 devices[device] = {"paths": sorted(paths), "updated": int(time.time() if now is None else now)}
-            write_atomic(self.path, json.dumps({"version": 1, "devices": devices}).encode())
+            self._write(devices)
 
 
 def valid_paths(raw, known: set[str]) -> set[str]:

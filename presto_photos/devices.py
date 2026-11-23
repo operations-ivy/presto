@@ -159,7 +159,7 @@ def video_devices(devices: dict[str, Device]) -> list[Device]:
 
 def pickable_paths_all(devices: dict[str, Device], index: dict) -> set[str]:
     """Every video at least one device can take: what the shared list may name."""
-    return set().union(*(pickable_paths(d, index) for d in video_devices(devices)))
+    return {path for dev in video_devices(devices) for path in pickable_paths(dev, index)}
 
 
 def catalog_all(devices: dict[str, Device], index: dict, picks: set[str] | None = None) -> dict:
