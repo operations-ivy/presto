@@ -3,7 +3,7 @@
 import random
 import time
 
-from neon import fx, nav, pager, sightings, sprites, theme, tz, wx
+from neon import fx, nav, pager, sightings, sprites, theme, tz, weatherfx, wx
 
 W = H = 240  # the Presto at its native speed: 240x240, doubled to the 480 panel
 SKY_BOTTOM = 165
@@ -69,6 +69,7 @@ class Home:
         self.stars = [(r(0, W - 1), r(0, SKY_BOTTOM - 70), r(0, 99)) for _ in range(45)]
         random.seed(time.ticks_us())  # everything after this (rain, glitches) differs each boot
         self.rain = fx.GlyphDrops(n=60, top=-10, bottom=GROUND)
+        self.sky_fx = None  # snow and lightning, made when the weather first needs them
         self.car = sprites.Sprite(sprites.SPINNER)
         self.car_x = None
         self.car_next = time.ticks_add(time.ticks_ms(), 8000)
@@ -257,6 +258,13 @@ class Home:
             # the wall and anything less barely shows (the user, 2026-11-06)
             presto.set_led_hsv(i, (i / 7 + t / RAINBOW_MS) % 1.0, 1.0, 1.0)
 
+    def _sky_fx(self):
+        """The Weather screen's snow and lightning, made the first time Home needs them
+        (most days it never does: RAM)."""
+        if self.sky_fx is None:
+            self.sky_fx = weatherfx.Sky(self.ctx.pens)
+        return self.sky_fx
+
     # --- drawing ---
     def draw(self, d, now_ms):
         ctx, p = self.ctx, self.ctx.pens
@@ -289,6 +297,10 @@ class Home:
         self._car(d, p, now_ms)
         self.sights.back(d, now_ms)  # behind the city
 
+        # a thunderstorm: lightning in the sky, behind the city (the user, 2026-11-22)
+        if kind == "storm":
+            self._sky_fx().lightning(d, now_ms, bottom=SKY_BOTTOM + 20, flash_h=SKY_BOTTOM)
+
         # skyline and windows
         for bx, by, bw, bh_ in self.buildings:
             d.set_pen(self.building_pen)
@@ -313,6 +325,9 @@ class Home:
         self.rain.n = wx.RAIN.get(kind, 15)
         if self.rain.n:
             self.rain.step_draw(d, self.rain_pens)
+        # snow drifting down over the city instead (the user, 2026-11-22)
+        if kind == "snow":
+            self._sky_fx().snow(d, 60, bottom=GROUND)
 
         self._clock(d, p, now_ms)
         self._forecast(d, p)

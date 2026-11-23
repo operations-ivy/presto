@@ -2,7 +2,7 @@
 """Draw the Presto's Home screen on the laptop, to a PNG: for design work without the device.
 
     poetry run python tools/render_home.py out.png [--signs '["BRICK", ["NEON", 12, "h"]]']
-        [--alerts none|warning|critical|stale] [--at-ms 5000] [--frames 1] [--scale 2]
+        [--alerts none|warning|critical|stale] [--weather rain] [--at-ms 5000] [--frames 1] [--scale 2]
 
 A stand-in for PicoGraphics: the bitmap8 pixel font is Pimoroni's own glyphs
 (tools/bitmap8.py); the vector font ("sans") is approximated with DejaVu Sans.
@@ -114,7 +114,7 @@ def defaults():
     raise SystemExit("no DEFAULTS in app.py")
 
 
-def ctx_for(display, signs, alerts):
+def ctx_for(display, signs, alerts, weather="rain"):
     from neon import pager, theme
 
     c = types.SimpleNamespace()
@@ -125,7 +125,7 @@ def ctx_for(display, signs, alerts):
     c.net = types.SimpleNamespace(up=True)
     c.clock = types.SimpleNamespace(valid=True, now=lambda: (2026, 11, 22, 22, 47, 0, 6, 326))
     summary = {"hi": 52, "lo": 41, "rain_pct": 40, "sunrise": 420, "sunset": 1010, "is_day": 0}
-    c.weather = types.SimpleNamespace(kind="rain", summary=summary, configured=True)
+    c.weather = types.SimpleNamespace(kind=weather, summary=summary, configured=True)
     p = pager.Pager("https://presto.example/alerts" if alerts != "off" else "", 120)
     if alerts in ("warning", "critical"):
         p.data = {
@@ -147,6 +147,7 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--signs", default='["BRICK"]', help="JSON, as SIGNS in secrets.py")
     ap.add_argument("--alerts", default="none", choices=("off", "none", "warning", "critical", "stale"))
+    ap.add_argument("--weather", default="rain", help="the forecast's kind (wx.KINDS: rain, storm, snow, fog, ...)")
     ap.add_argument("--at-ms", type=int, default=5000, help="ms since boot (the critical blink's phase)")
     ap.add_argument("--frames", type=int, default=1)
     ap.add_argument("--scale", type=int, default=2, help="PNG scale (the panel doubles 240 to 480)")
@@ -162,7 +163,7 @@ def main():
     from neon import home
 
     d = Display()
-    ctx = ctx_for(d, json.loads(args.signs), args.alerts)
+    ctx = ctx_for(d, json.loads(args.signs), args.alerts, args.weather)
     if args.alerts == "stale":
         clock["ms"] = 10**8
     screen = home.Home(ctx)
