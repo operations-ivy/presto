@@ -41,7 +41,7 @@ INDEX = {
         video("library/movies/Akira (1988).mkv"),
         video("library/movies/New.mkv", small=False),
         video("library/movies/Subbed.mkv", audio="sub"),
-        video("library/tv/Kite/Kite.mkv", kind="show", series="Kite"),
+        video("library/tv/Kite/Kite.mkv", kind="show", series="tv"),
         {"kind": "music", "share": "music", "path": "library/a.mp3", "bytes": 5, "mtime": 1},
     ],
 }
@@ -72,6 +72,7 @@ def test_the_catalog_lists_what_the_device_can_take():
         "audio": None,
         "picked": True,
     }
+    assert by_path["library/tv/Kite/Kite.mkv"]["series"] == "Kite"
     assert by_path["library/tv/Kite/Kite.mkv"]["bytes"] == 100 and not by_path["library/tv/Kite/Kite.mkv"]["picked"]
     assert all(i["picked"] for i in devices.catalog(TAGS["retroid"], INDEX)["items"])
     assert devices.catalog(TAGS["frame"], INDEX)["items"] == []

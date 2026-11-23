@@ -136,6 +136,15 @@ def manifest(dev: Device, index: dict, now: float | None = None, picks: set[str]
     return out
 
 
+def _show(item: dict) -> str | None:
+    """A show's name: its folder under library/tv/ (the index's `series` is
+    "tv" for every show until presto#46), else the index's own."""
+    parts = item["path"].split("/")
+    if item.get("kind") == "show" and len(parts) > 3 and parts[:2] == ["library", "tv"]:
+        return parts[2]
+    return item.get("series")
+
+
 def pickable_paths(dev: Device, index: dict) -> set[str]:
     """The library paths of every video this device can take: what a pick may name."""
     return {i["path"] for i in index.get("items", []) if i.get("kind") in VIDEO_KINDS and wants(dev, i) is not None}
@@ -157,7 +166,7 @@ def catalog(dev: Device, index: dict, picks: set[str] | None = None) -> dict:
             {
                 "path": item["path"],
                 "kind": item["kind"],
-                "series": item.get("series"),
+                "series": _show(item),
                 "bytes": item["bytes"] if waiting else f["bytes"],
                 "waiting": waiting,
                 "audio": item.get("audio"),
