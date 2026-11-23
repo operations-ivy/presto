@@ -33,13 +33,14 @@ timeouts) and a dropped one resumes where it stopped. The sorter files them.
     GET  /api/media/recent     the last uploads filed, the inbox's usage
     GET  /api/media/devices    every device, its tags, and the tag vocabulary
     GET  /api/media/sync?device=   what that device should hold (devices.py), narrowed
-                               to its picks when it has any (picks.py)
+                               to the picks when there are any (picks.py)
 
-The handheld picker (the user, 2026-11-22): choose which videos each handheld holds.
+The picker (the user, 2026-11-22; one list for every device since 2026-11-23):
+choose which videos the handhelds and brick9000 hold.
 
     GET  /media/devices        the picker page
-    GET  /api/media/catalog?device=   every video the device can take, picked or not
-    POST /api/media/picks?device=     {"paths": [...]}: its picks from now on;
+    GET  /api/media/catalog    every video any device can take, picked or not
+    POST /api/media/picks      {"paths": [...]}: the picks from now on;
                                {"reset": true}: no picks, so everything again
 """
 
@@ -62,7 +63,7 @@ from . import devices as media_devices
 from . import media
 from .device import Release
 from .inbox import Inbox, valid_upload
-from .picks import Picks, valid_paths
+from .picks import SHARED, Picks, valid_paths
 from .store import Store, valid_id
 
 log = brick_observe.get_logger(__name__)
@@ -70,7 +71,7 @@ PAGE = (Path(__file__).parent / "static" / "index.html").read_bytes()
 PICKER = (Path(__file__).parent / "static" / "devices.html").read_bytes()
 
 MAX_UPLOAD = 60 << 20  # a 48 MP ProRAW-ish HEIC is ~25 MB; this leaves room
-MAX_PICKS_BODY = 4 << 20  # a handheld's picks: ~20,000 paths of ~150 bytes
+MAX_PICKS_BODY = 4 << 20  # the picks: ~20,000 paths of ~150 bytes
 UPLOADS = Counter("photos_uploads_total", "Uploads, by result", ["result"])
 MAX_MEDIA_UPLOAD = 20 << 30  # one file; the inbox's own cap (MEDIA_LIMIT_GB) is for all of them together
 CHUNK = 16 << 20  # what the page sends per request: ~10 s on slow Wi-Fi, well inside Traefik's 60 s
@@ -117,6 +118,8 @@ def make_handler(
     showing = {}  # what the Presto last said it shows: {"id", "at"} (in memory: one web pod)
     devices = devices or {}
     picks = Picks(inbox.p("picks.json")) if inbox is not None else None
+    if picks is not None and (adopted := picks.adopt()):
+        log.info("picks: the shared list starts from one device's", device=adopted)
     locks: dict[str, threading.Lock] = {}  # one chunk at a time per upload (the page sends them in order anyway)
     locks_lock = threading.Lock()
 
@@ -443,21 +446,15 @@ def make_handler(
                 if dev is None:
                     return self.json(404, {"error": "no such device", "devices": sorted(devices)})
                 SYNCS.labels(dev.name).inc()
-                return self.json(200, media_devices.manifest(dev, inbox.index(), picks=picks.get(dev.name)))
+                return self.json(200, media_devices.manifest(dev, inbox.index(), picks=picks.get(SHARED)))
             if path == "/api/media/catalog":
-                dev = devices.get(self.query("device"))
-                if dev is None:
-                    return self.json(404, {"error": "no such device", "devices": sorted(devices)})
-                out = media_devices.catalog(dev, inbox.index(), picks.get(dev.name))
-                return self.json(200, {**out, "updated": picks.updated(dev.name)})
+                out = media_devices.catalog_all(devices, inbox.index(), picks.get(SHARED))
+                return self.json(200, {**out, "updated": picks.updated(SHARED)})
             self.json(404, {"error": "not found"})
 
         def media_picks(self):
             if inbox is None:
                 return self.json(404, {"error": "no media inbox here"})
-            dev = devices.get(self.query("device"))
-            if dev is None:
-                return self.json(404, {"error": "no such device", "devices": sorted(devices)})
             try:
                 body = self.body_json(MAX_PICKS_BODY)
             except ValueError as e:
@@ -465,13 +462,13 @@ def make_handler(
             chosen = None
             if body.get("reset") is not True:
                 try:
-                    chosen = valid_paths(body.get("paths"), media_devices.pickable_paths(dev, inbox.index()))
+                    chosen = valid_paths(body.get("paths"), media_devices.pickable_paths_all(devices, inbox.index()))
                 except ValueError as e:
                     return self.json(400, {"error": str(e)})
-            picks.set(dev.name, chosen)
+            picks.set(SHARED, chosen)
             count = None if chosen is None else len(chosen)
-            log.info("picks saved", device=dev.name, picked=count)
-            return self.json(200, {"device": dev.name, "picked": count})
+            log.info("picks saved", picked=count)
+            return self.json(200, {"picked": count})
 
         def media_begin(self):
             if inbox is None:

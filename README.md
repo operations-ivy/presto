@@ -246,9 +246,9 @@ counts the rest).
 | `GET /api/media/status?upload=` | `receiving` (offset), `queued`, or the sorter's record: `filed`/`review`, kind, share, path |
 | `GET /api/media/recent` | the last uploads filed, the inbox's usage and cap |
 | `GET /api/media/devices` | every device, its tags, the tag vocabulary |
-| `GET /api/media/sync?device=<name>` | the device's manifest: each file's `kind`, `share`, `path`, `bytes`, `mtime`, `variant`; `picked` says whether its picks narrowed it |
-| `GET /api/media/catalog?device=<name>` | every video the device can take: `path`, `kind`, `series`, `bytes` (its copy), `waiting` (no 480p copy yet), `picked` |
-| `POST /api/media/picks?device=<name>` `{"paths": [...]}` | saves its picks (library paths from the catalog); `{"reset": true}` forgets them, so it gets everything again |
+| `GET /api/media/sync?device=<name>` | the device's manifest: each file's `kind`, `share`, `path`, `bytes`, `mtime`, `variant`; `picked` says whether the picks narrowed it |
+| `GET /api/media/catalog` | every video any device can take: `path`, `kind`, `series`, `bytes` (the 480p copy's when a device takes it), `waiting` (no 480p copy yet), `picked`, `devices` (which take it) |
+| `POST /api/media/picks` `{"paths": [...]}` | saves the picks for every device (library paths from the catalog); `{"reset": true}` forgets them, so each gets everything again |
 
 POSTs need the page's guard (same Origin and `X-Presto: 1`), like the photo
 calls. A manifest's paths are relative to a Samba share's root: `movies` is
@@ -257,15 +257,17 @@ device pulls what it lacks or what changed (size, mtime) and removes what's
 no longer listed. The sorter rebuilds the index (`library.json` in the inbox)
 every 5 minutes and after each filing, so files added over Samba show up too.
 
-### Picking what each handheld holds
+### Picking what the devices hold
 
-`/media/devices` (linked nowhere yet; bookmark it) has a tab per handheld:
-movies and shows as checkboxes (a show's box ticks every episode; expand it
-for single ones), a filter, pick or unpick everything shown, and the picked
-total. A handheld with no picks saved gets everything its tags allow, which
-is what both handhelds held when the picker came in (the user, 2026-11-22),
-so the page starts with everything on them ticked. Picks are saved in
-`picks.json` in the inbox volume, by each video's library path.
+`/media/devices` (PICKS on the upload page) is **one list for every video
+device** (the user, 2026-11-23): the handhelds and brick9000. Movies and
+shows as checkboxes (a show's box ticks every episode; expand it for single
+ones), a filter, pick or unpick everything shown, and the picked total. Each
+device holds the picked videos its tags allow, so the Retroid still skips
+subtitled-only ones (their rows say "not on retroid"). With no picks saved,
+each gets everything its tags allow. Picks are saved in `picks.json` in the
+inbox volume (key `all`), by each video's library path; the per-device picks
+of 0.14 (one device's) became the shared list on the first start of 0.15.
 
 The handheld follows its picks when it's plugged into the laptop (with the
 `movies` share mounted at `/mnt/brick/movies`):
@@ -278,7 +280,9 @@ tools/handheld_sync.py rg476h --apply   # copy, delete, rebuild the TV playlists
 It only touches SD `Movies/movies` and `Movies/tv` (and the playlists in
 `Movies/tv-shows`), copies pictures and subtitles beside each video, deletes
 before copying, and stops if the new set won't fit. On-device syncing over
-Wi-Fi is still presto#40 and #44.
+Wi-Fi is still presto#44. brick9000 (tag `video_480p`: the 480p copies,
+which a Pi 4 decodes in software) reads its manifest itself and plays the
+files off the movies share in RetroArch (brick-cicd-config).
 
 Metrics: `media_uploads_total{kind,result}`, `media_sync_requests_total{device}`
 (page); `media_filed_total{kind,result}`, `media_library_files{kind}`,

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#07050f">
-<title>Handheld Picks</title>
+<title>Media Picks</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
@@ -26,10 +26,6 @@ header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;
 h1{font-family:var(--pixel);font-weight:700;font-size:clamp(24px,7vw,36px);margin:0;letter-spacing:2px;line-height:1;
   color:var(--cyan);text-shadow:0 0 4px rgba(5,217,232,.9),0 0 14px rgba(5,217,232,.5)}
 header a{color:var(--dim);font-family:var(--mono);font-size:14px}
-.tabs{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
-.tab{font-family:var(--pixel);font-size:14px;letter-spacing:1px;padding:9px 14px;border:1px solid var(--line-bright);
-  background:var(--panel);color:var(--dim);border-radius:6px;cursor:pointer}
-.tab[aria-selected=true]{color:var(--magenta);border-color:var(--magenta);box-shadow:0 0 10px rgba(255,42,109,.35)}
 .note{color:var(--faint);font-family:var(--mono);font-size:13px;margin:0 0 12px}
 .tools{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
 input[type=search]{flex:1 1 220px;min-width:0;background:var(--panel-2);border:1px solid var(--line-bright);color:var(--text);
@@ -68,10 +64,9 @@ input[type=checkbox]{width:20px;height:20px;accent-color:var(--magenta);flex:non
 <body>
 <main>
   <header>
-    <h1>HANDHELD PICKS</h1>
+    <h1>MEDIA PICKS</h1>
     <a href="/">&larr; uplink</a>
   </header>
-  <div class="tabs" id="tabs" role="tablist"></div>
   <p class="note" id="note"></p>
   <div class="tools">
     <input type="search" id="q" placeholder="filter: title or show" aria-label="Filter">
@@ -102,36 +97,20 @@ const gb = n => (n / 2 ** 30).toFixed(n >= 10 * 2 ** 30 ? 0 : 1) + " GB";
 const mb = n => n >= 2 ** 30 ? gb(n) : Math.round(n / 2 ** 20) + " MB";
 const stem = p => p.split("/").pop().replace(/\.[^.]+$/, "");
 
-let device = null, items = [], saved = new Set(), picked = new Set(), openShows = new Set();
+let devices = [], items = [], saved = new Set(), picked = new Set(), openShows = new Set();
 
-async function loadDevices() {
-  const r = await fetch("/api/media/devices");
-  const d = await r.json();
-  const video = d.devices.filter(x => x.tags.some(t => ["handheld", "medium_graphics", "high_graphics"].includes(t)));
-  const handhelds = video.filter(x => x.tags.includes("handheld"));
-  const tabs = $("#tabs");
-  for (const dev of handhelds.length ? handhelds : video) {
-    tabs.append(el("button", {class: "tab", role: "tab", "data-name": dev.name, onclick: () => choose(dev.name)}, dev.name.toUpperCase()));
-  }
-  const want = new URLSearchParams(location.search).get("device");
-  choose(want && tabs.querySelector(`[data-name="${CSS.escape(want)}"]`) ? want : tabs.firstChild?.dataset.name);
-}
-
-async function choose(name) {
-  if (!name) { $("#lists").replaceChildren(el("div", {class: "empty"}, "No handhelds in devices.yaml.")); return; }
-  if (dirty() && !confirm("Leave without saving these picks?")) return;
-  device = name;
-  history.replaceState(null, "", "?device=" + encodeURIComponent(name));
-  for (const t of document.querySelectorAll(".tab")) t.setAttribute("aria-selected", t.dataset.name === name);
+async function load() {
   $("#msg").textContent = "loading…";
-  const r = await fetch("/api/media/catalog?device=" + encodeURIComponent(name));
+  const r = await fetch("/api/media/catalog");
   const d = await r.json();
+  devices = d.devices;
   items = d.items;
+  if (!devices.length) { $("#lists").replaceChildren(el("div", {class: "empty"}, "No video devices in devices.yaml.")); return; }
   saved = new Set(items.filter(i => i.picked).map(i => i.path));
   picked = new Set(saved);
-  $("#note").textContent = (d.note ? d.note + ". " : "") +
-    (d.picked ? "Picks saved " + new Date(d.updated * 1000).toLocaleString() + "." : "No picks saved yet: it gets everything.") +
-    " Sync it from the laptop: tools/handheld_sync.py " + name;
+  $("#note").textContent = "One list for " + devices.join(", ") + ". " +
+    (d.picked ? "Picks saved " + new Date(d.updated * 1000).toLocaleString() + "." : "No picks saved yet: they get everything.") +
+    " Handhelds sync from the laptop (tools/handheld_sync.py <device>); brick9000 picks them up by itself.";
   $("#msg").textContent = "";
   render();
 }
@@ -153,6 +132,8 @@ function row(i) {
   const extra = [];
   if (i.waiting) extra.push(el("span", {class: "tag", title: "its 480p copy isn't made yet"}, "converting"));
   if (i.audio === "sub") extra.push(el("span", {class: "tag"}, "sub"));
+  const skip = devices.filter(n => !i.devices.includes(n));
+  if (skip.length) extra.push(el("span", {class: "tag", title: "these devices skip it (their tags)"}, "not on " + skip.join(", ")));
   const r = el("div", {class: "row", "data-path": i.path},
     el("label", {}, cb, el("span", {class: "name", title: i.path}, stem(i.path)), ...extra),
     el("span", {class: "size"}, mb(i.bytes)));
@@ -240,18 +221,18 @@ $("#undo").addEventListener("click", () => { picked = new Set(saved); refresh();
 $("#save").addEventListener("click", async () => {
   $("#save").disabled = true;
   $("#msg").textContent = "saving…";
-  const r = await fetch("/api/media/picks?device=" + encodeURIComponent(device), {
+  const r = await fetch("/api/media/picks", {
     method: "POST", headers: {"Content-Type": "application/json", "X-Presto": "1"},
     body: JSON.stringify({paths: [...picked]}),
   });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { $("#msg").textContent = "not saved: " + (d.error || r.status); refresh(); return; }
   saved = new Set(picked);
-  $("#msg").textContent = `saved: ${d.picked} videos. Plug the handheld into the laptop and run tools/handheld_sync.py ${device}.`;
+  $("#msg").textContent = `saved: ${d.picked} videos. Plug a handheld into the laptop and run tools/handheld_sync.py <device>.`;
   refresh();
 });
 addEventListener("beforeunload", e => { if (dirty()) e.preventDefault(); });
-loadDevices();
+load();
 </script>
 </body>
 </html>
