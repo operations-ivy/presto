@@ -73,8 +73,8 @@ def push(serial: str, src: Path, dst: str) -> None:
         out = run("adb", "-s", serial, "push", str(src), dst)
         if not out.returncode:
             return
-        err = out.stderr.strip() or out.stdout.strip()
-        print(f"    copy failed ({attempt}/{TRIES}): {err.splitlines()[-1] if err else 'no output'}", flush=True)
+        err = (out.stderr.strip() or out.stdout.strip()).splitlines()
+        print(f"    copy failed ({attempt}/{TRIES}): {err[-1] if err else 'no output'}", flush=True)
     raise SystemExit(f"couldn't copy {src}; run again to pick up where it stopped")
 
 
