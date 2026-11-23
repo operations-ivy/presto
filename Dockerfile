@@ -29,9 +29,9 @@ ENV VIRTUAL_ENV=/venv PATH=/venv/bin:$PATH PYTHONPATH=/code PYTHONDONTWRITEBYTEC
 WORKDIR /code
 # An explicit file list: a new module must be added here.
 COPY presto_photos/__init__.py presto_photos/__main__.py presto_photos/device.py presto_photos/devices.py \
-     presto_photos/alerts.py presto_photos/feed.py presto_photos/inbox.py presto_photos/media.py presto_photos/pipeline.py \
+     presto_photos/alerts.py presto_photos/feed.py presto_photos/inbox.py presto_photos/media.py presto_photos/picks.py presto_photos/pipeline.py \
      presto_photos/sorter.py presto_photos/store.py presto_photos/web.py presto_photos/worker.py /code/presto_photos/
-COPY presto_photos/static/index.html /code/presto_photos/static/
+COPY presto_photos/static/index.html presto_photos/static/devices.html /code/presto_photos/static/
 # The media device tags' default (the cluster mounts the same file from a ConfigMap).
 COPY k8s_config/devices.yaml /code/presto_photos/devices.yaml
 # The Presto's own code, which the page serves it over Wi-Fi (presto#9, device.py).
