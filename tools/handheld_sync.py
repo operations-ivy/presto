@@ -38,6 +38,7 @@ MODELS = {"RG 476H": "rg476h"}  # adb's ro.product.model -> devices.yaml name
 MERGE = {"Kite (Director's Cut)": "Kite"}  # Daijisho drops "(...)" and skipped the renamed list
 SLACK = 512 << 20  # leave this free on the card
 BATCH = 50  # files per `rm` on the device
+TRIES = 3  # per copy: the share is on Wi-Fi, and a read can fail (EAGAIN) mid-file
 
 
 class Entry(NamedTuple):
@@ -64,6 +65,17 @@ def adb(serial: str, *args: str, check: bool = True) -> str:
     if check and out.returncode:
         raise SystemExit(f"adb {' '.join(args)}: {out.stderr.strip() or out.stdout.strip()}")
     return out.stdout
+
+
+def push(serial: str, src: Path, dst: str) -> None:
+    """adb push, again from the start if a read from the share drops."""
+    for attempt in range(1, TRIES + 1):
+        out = run("adb", "-s", serial, "push", str(src), dst)
+        if not out.returncode:
+            return
+        err = out.stderr.strip() or out.stdout.strip()
+        print(f"    copy failed ({attempt}/{TRIES}): {err.splitlines()[-1] if err else 'no output'}", flush=True)
+    raise SystemExit(f"couldn't copy {src}; run again to pick up where it stopped")
 
 
 def sh(serial: str, cmd: str, check: bool = True) -> str:
@@ -198,7 +210,7 @@ def apply(serial: str, root: str, want: dict[str, Entry], p: Plan, tv: list[str]
         sh(serial, f"[ -d {q} ] && find {q} -mindepth 1 -type d -empty -delete", check=False)
     for n, r in enumerate(p.push, 1):
         print(f"  [{n}/{len(p.push)}] {r}", flush=True)
-        adb(serial, "push", str(want[r].src), f"{base}/{r}")
+        push(serial, want[r].src, f"{base}/{r}")
 
     lists = playlists(tv, root)
     pl = shlex.quote(f"{base}/{PLAYLISTS}")
