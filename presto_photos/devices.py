@@ -108,10 +108,11 @@ def _entry(item: dict, f: dict) -> dict:
 
 def manifest(dev: Device, index: dict, now: float | None = None, picks: set[str] | None = None) -> dict:
     """Everything this device should hold, from the sorter's library index:
-    what its tags allow, narrowed to its picks when it has any (picks.py)."""
+    what its tags allow, narrowed to its picks when it has any (picks.py).
+    picks None: no picks saved, everything; an empty set: nothing."""
     files, waiting = [], 0
     for item in index.get("items", []):
-        if picks is not None and item.get("path") not in picks:
+        if picks is not None and item["path"] not in picks:
             continue
         f = wants(dev, item)
         if f == WAITING:
@@ -135,6 +136,11 @@ def manifest(dev: Device, index: dict, now: float | None = None, picks: set[str]
     return out
 
 
+def pickable_paths(dev: Device, index: dict) -> set[str]:
+    """The library paths of every video this device can take: what a pick may name."""
+    return {i["path"] for i in index.get("items", []) if i.get("kind") in VIDEO_KINDS and wants(dev, i) is not None}
+
+
 def catalog(dev: Device, index: dict, picks: set[str] | None = None) -> dict:
     """The picker page's list for this device: every video its tags allow, with
     whether it's picked (no picks saved: all of them) and the size of the copy
@@ -146,7 +152,7 @@ def catalog(dev: Device, index: dict, picks: set[str] | None = None) -> dict:
         f = wants(dev, item)
         if f is None:
             continue
-        waiting = f == WAITING
+        waiting = f == WAITING  # no 480p copy yet: show the original's size
         items.append(
             {
                 "path": item["path"],

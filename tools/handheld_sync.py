@@ -17,16 +17,16 @@ Dry run by default. With --apply it deletes first (to make room), checks the
 new files fit, then copies.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import shlex
 import subprocess
 import sys
+import tempfile
 import urllib.request
 from collections import defaultdict
 from pathlib import Path, PurePosixPath
+from typing import NamedTuple
 
 URL = "https://presto.brick.nozdormu.cloud"
 SHARE = Path("/mnt/brick/movies")
@@ -37,33 +37,52 @@ POSTERS = ("poster.jpg", "poster.png", "poster.jpeg", "poster.webp")
 MODELS = {"RG_476H": "rg476h"}  # adb's ro.product.model -> devices.yaml name
 MERGE = {"Kite (Director's Cut)": "Kite"}  # Daijisho drops "(...)" and skipped the renamed list
 SLACK = 512 << 20  # leave this free on the card
+BATCH = 50  # files per `rm` on the device
 
 
-def adb(serial: str, *args: str, check=True) -> str:
-    out = subprocess.run(["adb", "-s", serial, *args], capture_output=True, text=True)
+class Entry(NamedTuple):
+    src: Path  # on the share
+    size: int
+
+
+class Plan(NamedTuple):
+    push: list[str]  # SD-relative paths to copy
+    drop: list[str]  # and to delete
+    need: int  # bytes the copies add (less what they replace)
+    freed: int  # bytes the deletes free
+
+
+def run(*cmd: str) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True)
+    except FileNotFoundError:
+        raise SystemExit(f"{cmd[0]} isn't installed") from None
+
+
+def adb(serial: str, *args: str, check: bool = True) -> str:
+    out = run("adb", "-s", serial, *args)
     if check and out.returncode:
         raise SystemExit(f"adb {' '.join(args)}: {out.stderr.strip() or out.stdout.strip()}")
     return out.stdout
 
 
-def sh(serial: str, cmd: str, check=True) -> str:
+def sh(serial: str, cmd: str, check: bool = True) -> str:
     return adb(serial, "shell", cmd, check=check)
 
 
 def pick_serial(device: str, serial: str | None) -> str:
-    lines = subprocess.run(["adb", "devices"], capture_output=True, text=True).stdout.splitlines()[1:]
+    lines = run("adb", "devices").stdout.splitlines()[1:]
     serials = [line.split()[0] for line in lines if line.endswith("\tdevice")]
     if serial:
         if serial not in serials:
             raise SystemExit(f"{serial} isn't connected (connected: {serials or 'none'})")
         return serial
-    for s in serials:
-        model = sh(s, "getprop ro.product.model").strip()
-        if MODELS.get(model) == device:
-            return s
-    others = [s for s in serials if MODELS.get(sh(s, "getprop ro.product.model").strip()) is None]
-    if len(others) == 1 and device not in MODELS.values():
-        return others[0]
+    models = {s: MODELS.get(sh(s, "getprop ro.product.model").strip()) for s in serials}
+    if found := [s for s, name in models.items() if name == device]:
+        return found[0]
+    unknown = [s for s, name in models.items() if name is None]
+    if len(unknown) == 1 and device not in MODELS.values():
+        return unknown[0]
     raise SystemExit(f"no {device} on adb (connected: {serials or 'none'}); plug it in, or pass --serial")
 
 
@@ -87,20 +106,26 @@ def rel_of(path: str) -> str:
     return rest if first in ("480p", "library") else path
 
 
-def wanted(files: list[dict], share: Path) -> dict[str, tuple[Path, int]]:
-    """SD-relative path -> (file on the share, bytes): the videos, and what sits beside them."""
+def wanted(files: list[dict], share: Path) -> dict[str, Entry]:
+    """SD-relative path -> what to copy there: the videos, and what sits beside them."""
     out = {}
     for f in files:
         src = share / f["path"]
         rel = rel_of(f["path"])
-        out[rel] = (src, f["bytes"])
-        folder = src.parent
-        names = [PurePosixPath(src.stem + ext) for ext in SIDECAR] + [PurePosixPath(p) for p in POSTERS]
-        for name in names:
-            side = folder / name
+        out[rel] = Entry(src, f["bytes"])
+        for name in [src.stem + ext for ext in SIDECAR] + list(POSTERS):
+            side = src.parent / name
             if side.is_file():
-                out[str(PurePosixPath(rel).parent / name)] = (side, side.stat().st_size)
+                out[f"{PurePosixPath(rel).parent}/{name}"] = Entry(side, side.stat().st_size)
     return out
+
+
+def plan(want: dict[str, Entry], have: dict[str, int]) -> Plan:
+    """Copy what's missing or a different size; delete what isn't wanted."""
+    push = sorted(r for r, e in want.items() if have.get(r) != e.size)
+    drop = sorted(r for r in have if r not in want)
+    need = sum(want[r].size for r in push) - sum(have.get(r, 0) for r in push)
+    return Plan(push, drop, need, sum(have[r] for r in drop))
 
 
 def on_card(serial: str, root: str) -> dict[str, int]:
@@ -128,12 +153,14 @@ def free_bytes(serial: str, root: str) -> int:
 
 
 def playlists(tv: list[str], root: str) -> dict[str, str]:
-    """One .m3u per show or season folder; loose one-offs beside season folders get their own."""
-    by_dir = defaultdict(list)
+    """One .m3u per show or season folder. A show with season folders can also
+    have a loose one-off or two beside them (Rhea Gall Force): each gets its own."""
+    by_dir: dict[str, list[str]] = defaultdict(list)
     for f in tv:
         by_dir[str(PurePosixPath(f).parent)].append(f)
+    # folders that hold season folders: tv/<Show>/<Season> has 3 parts, so its parent is tv/<Show>
     has_sub = {str(PurePosixPath(d).parent) for d in by_dir if len(PurePosixPath(d).parts) > 2}
-    lists = {}
+    lists: dict[str, list[str]] = {}
     for d, eps in by_dir.items():
         if d in has_sub and len(eps) <= 2:
             for e in eps:
@@ -153,7 +180,40 @@ def gb(n: int) -> str:
     return f"{n / 2**30:.1f} GB"
 
 
-def main():
+def show(sign: str, items: list[str], limit: int = 15) -> None:
+    for r in items[:limit]:
+        print(f"    {sign} {r}")
+    if len(items) > limit:
+        print(f"    ... and {len(items) - limit} more")
+
+
+def apply(serial: str, root: str, want: dict[str, Entry], p: Plan, tv: list[str]) -> int:
+    """Delete, copy, then the playlists and a media scan; returns how many playlists."""
+    base = f"{root}/Movies"
+    for start in range(0, len(p.drop), BATCH):
+        batch = p.drop[start : start + BATCH]  # noqa: E203 (black's slice spacing)
+        sh(serial, "rm -f " + " ".join(shlex.quote(f"{base}/{r}") for r in batch))
+    for d in OWNED:
+        q = shlex.quote(f"{base}/{d}")
+        sh(serial, f"[ -d {q} ] && find {q} -mindepth 1 -type d -empty -delete", check=False)
+    for n, r in enumerate(p.push, 1):
+        print(f"  [{n}/{len(p.push)}] {r}", flush=True)
+        adb(serial, "push", str(want[r].src), f"{base}/{r}")
+
+    lists = playlists(tv, root)
+    pl = shlex.quote(f"{base}/{PLAYLISTS}")
+    sh(serial, f"mkdir -p {pl} && rm -f {pl}/*.m3u")
+    if lists:
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, text in lists.items():
+                (Path(tmp) / name).write_text(text)
+            adb(serial, "push", *[str(Path(tmp) / n) for n in lists], f"{base}/{PLAYLISTS}/")
+    volume = root.rsplit("/", 1)[1].lower()
+    sh(serial, f"content call --uri content://media --method scan_volume --arg {volume}", check=False)
+    return len(lists)
+
+
+def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("device", help="its name in devices.yaml: rg476h, retroid")
     ap.add_argument("--apply", action="store_true", help="make the changes (default: only say what they'd be)")
@@ -167,77 +227,32 @@ def main():
     serial = pick_serial(args.device, args.serial)
     root = sd_root(serial)
     m = manifest(args.device, args.url)
-    want = wanted(m["files"], args.share)
-    have = on_card(serial, root)
-    missing = [r for r in want if not want[r][0].is_file()]
-    if missing:
-        print(f"not on the share (skipped): {len(missing)}, e.g. {missing[0]}")
-        for r in missing:
-            del want[r]
-    push = sorted(r for r, (_, n) in want.items() if have.get(r) != n)
-    drop = sorted(r for r in have if r not in want)
-    need = sum(want[r][1] for r in push) - sum(have[r] for r in push if r in have)
-    freed = sum(have[r] for r in drop)
+    listed = wanted(m["files"], args.share)
+    want = {r: e for r, e in listed.items() if e.src.is_file()}
+    if skipped := sorted(set(listed) - set(want)):
+        print(f"not on the share (skipped): {len(skipped)}, e.g. {skipped[0]}")
+    p = plan(want, on_card(serial, root))
     free = free_bytes(serial, root)
     tv = sorted(r for r in want if r.startswith("tv/") and not r.endswith(SIDECAR))
 
+    picked = "its picks" if m.get("picked") else "no picks saved: everything"
     print(
-        f"{args.device} ({serial}), card {root}: {len(m['files'])} videos listed"
-        f" ({'its picks' if m.get('picked') else 'no picks saved: everything'}),"
+        f"{args.device} ({serial}), card {root}: {len(m['files'])} videos listed ({picked}),"
         f" {m.get('waiting_for_480p', 0)} waiting for a 480p copy"
     )
-    print(f"  copy:   {len(push)} files, {gb(sum(want[r][1] for r in push))}")
-    for r in push[:15]:
-        print(f"    + {r}")
-    if len(push) > 15:
-        print(f"    ... and {len(push) - 15} more")
-    print(f"  delete: {len(drop)} files, {gb(freed)}")
-    for r in drop[:15]:
-        print(f"    - {r}")
-    if len(drop) > 15:
-        print(f"    ... and {len(drop) - 15} more")
-    print(f"  card free {gb(free)}; after: {gb(free + freed - need)}")
-    if free + freed - need < SLACK:
+    print(f"  copy:   {len(p.push)} files, {gb(sum(want[r].size for r in p.push))}")
+    show("+", p.push)
+    print(f"  delete: {len(p.drop)} files, {gb(p.freed)}")
+    show("-", p.drop)
+    after = free + p.freed - p.need
+    print(f"  card free {gb(free)}; after: {gb(after)}")
+    if after < SLACK:
         raise SystemExit("won't fit: unpick some videos on the page first")
     if not args.apply:
         print("dry run: nothing changed. Run again with --apply to do it.")
         return
-
-    base = f"{root}/Movies"
-    for start in range(0, len(drop), 50):
-        sh(serial, "rm -f " + " ".join(shlex.quote(f"{base}/{r}") for r in drop[start:][:50]))
-    for d in OWNED:
-        sh(
-            serial,
-            f"[ -d {shlex.quote(f'{base}/{d}')} ] && find {shlex.quote(f'{base}/{d}')} -mindepth 1 -type d -empty"
-            " -delete",
-            check=False,
-        )
-    for n, r in enumerate(push, 1):
-        src = want[r][0]
-        print(f"  [{n}/{len(push)}] {r}", flush=True)
-        adb(serial, "push", str(src), f"{base}/{r}")
-
-    lists = playlists(tv, root)
-    out = Path.home() / ".cache" / "handheld-sync" / args.device
-    out.mkdir(parents=True, exist_ok=True)
-    for old in out.glob("*.m3u"):
-        old.unlink()
-    for name, text in lists.items():
-        (out / name).write_text(text)
-    pl = f"{base}/{PLAYLISTS}"
-    sh(serial, f"mkdir -p {shlex.quote(pl)} && rm -f {shlex.quote(pl)}/*.m3u")
-    if lists:
-        adb(serial, "push", *[str(out / n) for n in lists], pl + "/")
-    sh(
-        serial,
-        "content call --uri content://media --method scan_volume --arg " + root.rsplit("/", 1)[1].lower(),
-        check=False,
-    )
-    print(
-        f"done: {len(push)} copied, {len(drop)} deleted, {len(lists)} TV playlists."
-        " In Daijisho, sync the Movies and TV platforms."
-    )
+    n = apply(serial, root, want, p, tv)
+    print(f"done: {len(p.push)} copied, {len(p.drop)} deleted, {n} TV playlists. In Daijisho, sync Movies and TV.")
 
 
 if __name__ == "__main__":

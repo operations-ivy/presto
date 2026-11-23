@@ -68,9 +68,9 @@ from .store import Store, valid_id
 log = brick_observe.get_logger(__name__)
 PAGE = (Path(__file__).parent / "static" / "index.html").read_bytes()
 PICKER = (Path(__file__).parent / "static" / "devices.html").read_bytes()
-MAX_PICKS_BODY = 4 << 20  # ~20,000 paths of ~150 bytes
 
 MAX_UPLOAD = 60 << 20  # a 48 MP ProRAW-ish HEIC is ~25 MB; this leaves room
+MAX_PICKS_BODY = 4 << 20  # a handheld's picks: ~20,000 paths of ~150 bytes
 UPLOADS = Counter("photos_uploads_total", "Uploads, by result", ["result"])
 MAX_MEDIA_UPLOAD = 20 << 30  # one file; the inbox's own cap (MEDIA_LIMIT_GB) is for all of them together
 CHUNK = 16 << 20  # what the page sends per request: ~10 s on slow Wi-Fi, well inside Traefik's 60 s
@@ -460,16 +460,18 @@ def make_handler(
                 return self.json(404, {"error": "no such device", "devices": sorted(devices)})
             try:
                 body = self.body_json(MAX_PICKS_BODY)
-                if body.get("reset") is True:
-                    chosen = None
-                else:
-                    known = {i["path"] for i in media_devices.catalog(dev, inbox.index())["items"]}
-                    chosen = valid_paths(body.get("paths"), known)
             except ValueError as e:
                 return self.json(400, {"error": str(e)})
+            chosen = None
+            if body.get("reset") is not True:
+                try:
+                    chosen = valid_paths(body.get("paths"), media_devices.pickable_paths(dev, inbox.index()))
+                except ValueError as e:
+                    return self.json(400, {"error": str(e)})
             picks.set(dev.name, chosen)
-            log.info("picks saved", device=dev.name, picked=None if chosen is None else len(chosen))
-            return self.json(200, {"device": dev.name, "picked": None if chosen is None else len(chosen)})
+            count = None if chosen is None else len(chosen)
+            log.info("picks saved", device=dev.name, picked=count)
+            return self.json(200, {"device": dev.name, "picked": count})
 
         def media_begin(self):
             if inbox is None:
