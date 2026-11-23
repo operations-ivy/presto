@@ -105,6 +105,7 @@ h2{font-family:var(--pixel);font-weight:400;font-size:15px;letter-spacing:3px;co
 .tabs{display:flex;gap:8px;margin:0 0 16px}
 .tab{flex:1;min-height:44px;font-family:var(--pixel);font-size:14px;letter-spacing:2px;color:var(--dim);background:var(--panel);
   border:1px solid var(--line);border-radius:4px;cursor:pointer}
+a.tab{display:flex;align-items:center;justify-content:center;text-decoration:none}
 .tab[aria-selected="true"]{color:var(--cyan);border-color:var(--cyan);box-shadow:0 0 12px rgba(5,217,232,.3)}
 .view[hidden]{display:none}
 .tools{display:flex;gap:8px;align-items:center;justify-content:space-between;margin:0 0 12px;font-family:var(--mono);font-size:13px;color:var(--dim)}
@@ -174,6 +175,7 @@ input[type=range]{width:100%;accent-color:var(--cyan);margin:12px 0 4px}
   <div class="tabs" role="tablist">
     <button class="tab" id="tab-uplink" type="button" role="tab" aria-controls="uplink">UPLINK</button>
     <button class="tab" id="tab-library" type="button" role="tab" aria-controls="library">LIBRARY</button>
+    <a class="tab" href="/media/devices" title="Which videos the handhelds and brick9000 hold">PICKS</a>
   </div>
 
   <section class="view" id="uplink" role="tabpanel" aria-labelledby="tab-uplink">

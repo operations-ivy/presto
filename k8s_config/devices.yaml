@@ -6,6 +6,7 @@
 #
 #   handheld            plays video on a small screen: the 480p copies
 #   640x480             a 640x480 screen: the 480p copies
+#   video_480p          the 480p copies whatever the screen (decodes in software)
 #   medium_graphics     plays video (originals)
 #   high_graphics       plays video at full size (originals)
 #   english_audio_only  no video known to be subtitled-only
@@ -14,8 +15,8 @@
 #   pi4                 a Raspberry Pi 4 (descriptive)
 devices:
   brick9000:
-    tags: [pi4, medium_graphics]
-    note: the status board
+    tags: [pi4, medium_graphics, video_480p]
+    note: the status board; RetroArch plays the picks off the movies share
   rg476h:
     tags: [handheld, high_graphics]
     note: a handheld

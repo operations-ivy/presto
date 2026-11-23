@@ -1,4 +1,4 @@
-"""The handheld picker (picks.py, devices.manifest/catalog, /api/media/picks)."""
+"""The picker: one list for every device (picks.py, devices.manifest/catalog_all, /api/media/picks)."""
 
 import contextlib
 import json
@@ -11,13 +11,25 @@ import pytest
 
 from presto_photos import devices, web
 from presto_photos.inbox import Inbox
-from presto_photos.picks import Picks, valid_paths
+from presto_photos.picks import SHARED, Picks, valid_paths
 from presto_photos.store import Store
 
 TAGS = devices.parse(
     """devices:
   retroid:
     tags: [handheld, english_audio_only]
+  frame:
+    tags: [photos_240]
+"""
+)
+ALL = devices.parse(
+    """devices:
+  retroid:
+    tags: [handheld, english_audio_only]
+  rg:
+    tags: [handheld, high_graphics]
+  board:
+    tags: [pi4, medium_graphics, video_480p]
   frame:
     tags: [photos_240]
 """
@@ -78,6 +90,45 @@ def test_the_catalog_lists_what_the_device_can_take():
     assert devices.catalog(TAGS["frame"], INDEX)["items"] == []
 
 
+def test_one_catalog_for_every_device():
+    cat = devices.catalog_all(ALL, INDEX, picks={"library/movies/New.mkv"})
+    assert cat["devices"] == ["board", "retroid", "rg"] and cat["picked"] is True
+    by_path = {i["path"]: i for i in cat["items"]}
+    assert set(by_path) == {
+        "library/movies/Akira (1988).mkv",
+        "library/movies/New.mkv",
+        "library/movies/Subbed.mkv",
+        "library/tv/Kite/Kite.mkv",
+    }
+    assert by_path["library/movies/Subbed.mkv"]["devices"] == ["board", "rg"]  # the Retroid skips subtitled-only
+    assert by_path["library/movies/Akira (1988).mkv"]["devices"] == ["board", "retroid", "rg"]
+    assert by_path["library/movies/Akira (1988).mkv"]["bytes"] == 100  # the 480p copy's size
+    assert by_path["library/movies/New.mkv"]["picked"] and not by_path["library/tv/Kite/Kite.mkv"]["picked"]
+    assert devices.pickable_paths_all(ALL, INDEX) == set(by_path)
+
+
+def test_video_480p_takes_the_480p_copies():
+    m = devices.manifest(ALL["board"], INDEX)
+    assert [f["path"] for f in m["files"]] == [
+        "480p/movies/Akira (1988).mp4",
+        "480p/movies/Subbed.mp4",
+        "480p/tv/Kite/Kite.mp4",
+    ]
+
+
+def test_one_devices_picks_become_the_shared_list(tmp_path):
+    p = Picks(tmp_path / "picks.json")
+    assert p.adopt() is None  # nothing saved
+    p.set("rg476h", {"a", "b"}, now=5)
+    assert p.adopt() == "rg476h"
+    assert p.get(SHARED) == {"a", "b"} and p.updated(SHARED) == 5 and p.get("rg476h") is None
+    assert p.adopt() is None  # once
+    q = Picks(tmp_path / "two.json")
+    q.set("rg476h", {"a"})
+    q.set("retroid", {"b"})
+    assert q.adopt() is None and q.get(SHARED) is None  # two lists: no guessing which
+
+
 def test_picks_are_saved_and_forgotten(tmp_path):
     p = Picks(tmp_path / "picks.json")
     assert p.get("retroid") is None
@@ -120,31 +171,30 @@ def req(host, path, body=None, guarded=True):
 def host(tmp_path):
     inbox = Inbox(tmp_path / "media", limit_bytes=1 << 20, min_free_bytes=0, create=True)
     inbox.write_index(INDEX)
-    with serve(web.make_handler(Store(tmp_path / "photos"), None, inbox, TAGS)) as h:
+    with serve(web.make_handler(Store(tmp_path / "photos"), None, inbox, ALL)) as h:
         yield h
 
 
-def test_the_page_picks_and_the_sync_follows(host):
+def test_the_page_picks_and_every_device_follows(host):
     with urllib.request.urlopen(f"http://{host}/media/devices", timeout=10) as resp:
-        assert b"HANDHELD PICKS" in resp.read()
-    status, cat = req(host, "/api/media/catalog?device=retroid")
-    assert status == 200 and cat["picked"] is False and len(cat["items"]) == 3
-    assert req(host, "/api/media/picks?device=retroid", {"paths": ["library/tv/Kite/Kite.mkv"]}) == (
-        200,
-        {"device": "retroid", "picked": 1},
-    )
+        assert b"MEDIA PICKS" in resp.read()
+    status, cat = req(host, "/api/media/catalog")
+    assert status == 200 and cat["picked"] is False and len(cat["items"]) == 4
+    picks = ["library/tv/Kite/Kite.mkv", "library/movies/Subbed.mkv"]
+    assert req(host, "/api/media/picks", {"paths": picks}) == (200, {"picked": 2})
     _, m = req(host, "/api/media/sync?device=retroid")
-    assert [f["path"] for f in m["files"]] == ["480p/tv/Kite/Kite.mp4"]
-    _, cat = req(host, "/api/media/catalog?device=retroid")
+    assert [f["path"] for f in m["files"]] == ["480p/tv/Kite/Kite.mp4"]  # not Subbed: its tags
+    _, m = req(host, "/api/media/sync?device=board")
+    assert [f["path"] for f in m["files"]] == ["480p/movies/Subbed.mp4", "480p/tv/Kite/Kite.mp4"]
+    _, cat = req(host, "/api/media/catalog")
     assert cat["picked"] is True and cat["updated"]
-    assert req(host, "/api/media/picks?device=retroid", {"reset": True})[1]["picked"] is None
+    assert req(host, "/api/media/picks", {"reset": True})[1]["picked"] is None
     _, m = req(host, "/api/media/sync?device=retroid")
     assert len(m["files"]) == 2
 
 
 def test_picks_refuse_strangers_and_unknown_paths(host):
-    assert req(host, "/api/media/picks?device=retroid", {"paths": []}, guarded=False)[0] == 403
-    assert req(host, "/api/media/picks?device=nobody", {"paths": []})[0] == 404
-    assert req(host, "/api/media/picks?device=retroid", {"paths": ["library/a.mp3"]})[0] == 400
-    assert req(host, "/api/media/picks?device=retroid", {"paths": "x"})[0] == 400
-    assert req(host, "/api/media/catalog?device=nobody")[0] == 404
+    assert req(host, "/api/media/picks", {"paths": []}, guarded=False)[0] == 403
+    assert req(host, "/api/media/picks", {"paths": ["library/a.mp3"]})[0] == 400
+    assert req(host, "/api/media/picks", {"paths": "x"})[0] == 400
+    assert req(host, "/api/media/sync?device=nobody")[0] == 404

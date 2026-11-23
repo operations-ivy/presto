@@ -5,7 +5,7 @@ tags each device with what it can use. Rules here turn tags into the kinds a
 device gets and which copy of each:
 
     handheld, medium_graphics, high_graphics   plays video: movies and shows
-    handheld, 640x480                          a small screen: the 480p copy of each video
+    handheld, 640x480, video_480p              the 480p copy of each video
     english_audio_only                         no video known to be subtitled-only
     music                                      the music library
     photos_240                                 the photo frame's 240x240 frames (/manifest.json)
@@ -33,10 +33,11 @@ VOCABULARY = {
     "english_audio_only": "skips video known to be subtitled-only: too small to read",
     "music": "gets the music library",
     "photos_240": "a photo frame: the Presto's 240x240 frames (its own /manifest.json)",
+    "video_480p": "the 480p copies whatever the screen: decodes in software (a Pi 4)",
     "pi4": "a Raspberry Pi 4 (descriptive)",
 }
 PLAYS_VIDEO = frozenset({"handheld", "medium_graphics", "high_graphics"})
-SMALL_SCREEN = frozenset({"handheld", "640x480"})
+SMALL_SCREEN = frozenset({"handheld", "640x480", "video_480p"})
 NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 VIDEO_KINDS = ("movie", "show")
 WAITING = "waiting"  # wants() for a small screen whose 480p copy isn't made yet
@@ -148,6 +149,29 @@ def _show(item: dict) -> str | None:
 def pickable_paths(dev: Device, index: dict) -> set[str]:
     """The library paths of every video this device can take: what a pick may name."""
     return {i["path"] for i in index.get("items", []) if i.get("kind") in VIDEO_KINDS and wants(dev, i) is not None}
+
+
+def video_devices(devices: dict[str, Device]) -> list[Device]:
+    """The devices that play video, small screens first: a catalog row's size is the
+    first such device's copy (the 480p one when any device takes it)."""
+    return sorted((d for d in devices.values() if d.plays_video), key=lambda d: (not d.small_screen, d.name))
+
+
+def pickable_paths_all(devices: dict[str, Device], index: dict) -> set[str]:
+    """Every video at least one device can take: what the shared list may name."""
+    return set().union(*(pickable_paths(d, index) for d in video_devices(devices)))
+
+
+def catalog_all(devices: dict[str, Device], index: dict, picks: set[str] | None = None) -> dict:
+    """The picker page's one list: every video any device can take, each row
+    also naming the devices that take it (the Retroid skips subtitled-only ones)."""
+    devs = video_devices(devices)
+    rows: dict[str, dict] = {}
+    for dev in devs:
+        for row in catalog(dev, index, picks)["items"]:
+            rows.setdefault(row["path"], {**row, "devices": []})["devices"].append(dev.name)
+    items = sorted(rows.values(), key=lambda i: i["path"].casefold())
+    return {"devices": [d.name for d in devs], "picked": picks is not None, "items": items}
 
 
 def catalog(dev: Device, index: dict, picks: set[str] | None = None) -> dict:
