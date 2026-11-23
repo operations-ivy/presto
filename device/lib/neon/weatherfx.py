@@ -89,9 +89,9 @@ class Sky:
         if scene["rain"]:
             self._rain(d, scene["rain"])
         if scene["snow"]:
-            self._snow(d, scene["snow"])
+            self.snow(d, scene["snow"])
         if scene["bolts"]:
-            self._lightning(d, now_ms)
+            self.lightning(d, now_ms)
 
     def _sun(self, d, now_ms):
         cx, cy = 196, 40
@@ -154,24 +154,27 @@ class Sky:
             d.set_pen(self.rain_pens[0 if s[2] < 7 else 1 if s[2] < 9 else 2])
             d.line(s[0], s[1], s[0] + s[2] // 3, s[1] - s[2])
 
-    def _snow(self, d, n):
+    def snow(self, d, n, bottom=H):
+        """n flakes drifting down to bottom (Weather's whole screen, Home's ground)."""
         p = self.p
         for i in range(min(n, len(self.flakes))):
             f = self.flakes[i]
             f[1] += f[2]
             f[3] = (f[3] + 7) % 628
-            if f[1] > H:
+            if f[1] > bottom:
                 f[0], f[1] = random.randint(0, W - 1), -random.randint(0, 30)
             x = int(f[0] + 3 * math.sin(f[3] / 100))
             d.set_pen(p.text if f[2] > 1 else p.dim)
             d.rectangle(x, int(f[1]), f[2] + 1, f[2] + 1)
 
-    def _lightning(self, d, now_ms):
+    def lightning(self, d, now_ms, bottom=150, flash_h=H):
+        """Now and then a bolt down to bottom, the sky flashing (flash_h tall) for a frame:
+        Weather's whole screen; Home flashes only its sky, behind the skyline."""
         if self.bolt_at is None:
             self.bolt_at = _add(now_ms, random.randint(2000, 6000))
         if self.bolt is None and _since(now_ms, self.bolt_at) >= 0:
             x, y, pts = random.randint(30, W - 30), 0, []
-            while y < 150:
+            while y < bottom:
                 pts.append((x, y))
                 x += random.randint(-14, 14)
                 y += random.randint(12, 24)
@@ -184,7 +187,7 @@ class Sky:
         p = self.p
         if left == 3:  # the flash: the sky lights up for one frame
             d.set_pen(p.rgb(70, 64, 110))
-            d.rectangle(0, 0, W, H)
+            d.rectangle(0, 0, W, flash_h)
         d.set_pen(p.text if left > 1 else p.violet)
         for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
             d.line(x1, y1, x2, y2)

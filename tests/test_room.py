@@ -240,3 +240,37 @@ def test_the_effect_pools_cover_the_busiest_scene():
     assert len(sky.flakes) >= max(s["snow"] for s in scenes)
     assert len(sky.clouds) >= max(s["clouds"] for s in scenes)
     assert len(sky.banks) >= max(s["fog"] for s in scenes)
+
+
+class _Display:
+    """Records rectangles and lines, as PicoGraphics would draw them."""
+
+    def __init__(self):
+        self.rects, self.lines = [], []
+
+    def set_pen(self, pen):
+        pass
+
+    def rectangle(self, x, y, w, h):
+        self.rects.append((x, y, w, h))
+
+    def line(self, x1, y1, x2, y2):
+        self.lines.append((x1, y1, x2, y2))
+
+
+def test_home_lightning_flashes_only_the_sky_and_stops_at_the_city():
+    """Home's storm (the user, 2026-11-22): the flash tints the sky, the bolt reaches
+    the rooftops, never the clock-wide full screen the Weather screen uses."""
+    sky, d = weatherfx.Sky(_Pens()), _Display()
+    sky.lightning(d, 0, bottom=185, flash_h=165)  # arms the first bolt
+    sky.lightning(d, 10**6, bottom=185, flash_h=165)  # long past due: it strikes
+    assert d.rects == [(0, 0, weatherfx.W, 165)]
+    assert d.lines and max(max(y1, y2) for _, y1, _, y2 in d.lines) <= 185 + 24
+
+
+def test_home_snow_comes_back_above_the_ground():
+    sky, d = weatherfx.Sky(_Pens()), _Display()
+    for f in sky.flakes:
+        f[1] = 300  # all below Home's ground
+    sky.snow(d, 60, bottom=226)
+    assert all(f[1] <= 0 for f in sky.flakes[:60])  # respawned above the screen
