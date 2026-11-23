@@ -106,10 +106,13 @@ def _entry(item: dict, f: dict) -> dict:
     return {"kind": item["kind"], "share": item["share"], "path": f["path"], "bytes": f["bytes"], "mtime": f["mtime"]}
 
 
-def manifest(dev: Device, index: dict, now: float | None = None) -> dict:
-    """Everything this device should hold, from the sorter's library index."""
+def manifest(dev: Device, index: dict, now: float | None = None, picks: set[str] | None = None) -> dict:
+    """Everything this device should hold, from the sorter's library index:
+    what its tags allow, narrowed to its picks when it has any (picks.py)."""
     files, waiting = [], 0
     for item in index.get("items", []):
+        if picks is not None and item.get("path") not in picks:
+            continue
         f = wants(dev, item)
         if f == WAITING:
             waiting += 1
@@ -125,7 +128,35 @@ def manifest(dev: Device, index: dict, now: float | None = None) -> dict:
         "files": files,
         "bytes": sum(f["bytes"] for f in files),
         "waiting_for_480p": waiting,
+        "picked": picks is not None,
     }
     if "photos_240" in dev.tags:
         out["photos"] = {"manifest": "/manifest.json", "size": 240}
     return out
+
+
+def catalog(dev: Device, index: dict, picks: set[str] | None = None) -> dict:
+    """The picker page's list for this device: every video its tags allow, with
+    whether it's picked (no picks saved: all of them) and the size of the copy
+    it would get (the original's until a small screen's 480p copy is made)."""
+    items = []
+    for item in index.get("items", []):
+        if item.get("kind") not in VIDEO_KINDS:
+            continue
+        f = wants(dev, item)
+        if f is None:
+            continue
+        waiting = f == WAITING
+        items.append(
+            {
+                "path": item["path"],
+                "kind": item["kind"],
+                "series": item.get("series"),
+                "bytes": item["bytes"] if waiting else f["bytes"],
+                "waiting": waiting,
+                "audio": item.get("audio"),
+                "picked": picks is None or item["path"] in picks,
+            }
+        )
+    items.sort(key=lambda i: i["path"].casefold())
+    return {"device": dev.name, "note": dev.note, "picked": picks is not None, "items": items}
