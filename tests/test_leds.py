@@ -20,7 +20,9 @@ class FakePresto:
 
 def gate(tmp_path):
     presto = FakePresto()
-    return leds.Gate(presto, str(tmp_path / "leds_off")), presto
+    g = leds.Gate(presto, str(tmp_path / "leds_off"))
+    g.load()
+    return g, presto
 
 
 def test_off_blanks_them_and_drops_every_write_until_on(tmp_path):
@@ -41,9 +43,13 @@ def test_off_blanks_them_and_drops_every_write_until_on(tmp_path):
 def test_off_survives_a_restart(tmp_path):
     g, _ = gate(tmp_path)
     g.switch(True)
-    assert leds.Gate(FakePresto(), g.marker).off
+    again = leds.Gate(FakePresto(), g.marker)
+    assert not again.off  # until the card is read
+    again.load()
+    assert again.off
     g.switch(False)
-    assert not leds.Gate(FakePresto(), g.marker).off
+    again.load()
+    assert not again.off
 
 
 def test_the_loop_hears_of_each_change_once(tmp_path):
@@ -79,3 +85,11 @@ def test_leds_need_post_to_switch_and_a_gate_to_answer(tmp_path):
     assert not g.off
     assert roomhttp.respond("POST", "/room.json", ROOM, 0, g)[0] == "405 Method Not Allowed"
     assert roomhttp.respond("GET", "/leds", ROOM, 0)[0] == "404 Not Found"  # no gate: no switch
+
+
+def test_a_marker_that_cant_be_written_still_switches_them_off(tmp_path):
+    presto = FakePresto()
+    g = leds.Gate(presto, str(tmp_path / "no-card" / "leds_off"))
+    assert g.switch(True)
+    assert g.off
+    assert presto.writes == [("rgb", i, 0, 0, 0) for i in range(leds.COUNT)]

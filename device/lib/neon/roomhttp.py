@@ -103,7 +103,7 @@ def request_path(raw):
     return (parts[0], parts[1].split("?")[0])
 
 
-LED_ACTIONS = {"/leds/off": True, "/leds/on": False}  # path -> off; /leds/toggle flips
+LED_PATHS = ("/leds/off", "/leds/on", "/leds/toggle")  # POST: switch the back LEDs
 
 
 def leds_document(leds):
@@ -112,11 +112,11 @@ def leds_document(leds):
 
 def respond(method, path, room, now_ms, leds=None):
     """(status line, content type, body) for one request."""
-    if leds is not None and method == "POST" and (path in LED_ACTIONS or path == "/leds/toggle"):
+    if leds is not None and method == "POST" and path in LED_PATHS:
         if path == "/leds/toggle":
             leds.toggle()
         else:
-            leds.switch(LED_ACTIONS[path])
+            leds.switch(path == "/leds/off")
         return "200 OK", "application/json", leds_document(leds)
     if method not in ("GET", "HEAD"):
         return "405 Method Not Allowed", "text/plain", "GET only (POST: /leds/off, /leds/on, /leds/toggle)\n"

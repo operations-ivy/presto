@@ -67,6 +67,7 @@ def run(presto, secrets):
     ctx.goto = None  # a screen asks for a switch (Home's badge -> ALERTS); the loop does it
     chirp = services.Chirp(s["chirp"], s["chirp_volume"])
     card.mount()
+    presto.load()  # the LED switch as it was left (on the card)
     from neon import photosync
 
     ctx.feed = photosync.Feed(s["photo_feed"], s["feed_minutes"] * 60)

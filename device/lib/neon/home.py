@@ -37,6 +37,12 @@ ARROW_AT = {  # top-left corners; left and right sit below the forecast
 }
 
 
+def _hit(box, slop, x, y):
+    """A tap on (x, y, w, h) or within slop px of it."""
+    bx, by, bw, bh = box
+    return bx - slop <= x < bx + bw + slop and by - slop <= y < by + bh + slop
+
+
 class Home:
     name = "home"
     frame_ms = 90  # ~11 fps (a full repaint costs ~10 ms at 240x240)
@@ -245,16 +251,13 @@ class Home:
 
     def tap(self, x, y):
         now = time.ticks_ms()
-        bx, by, bw, bh = LED_BOX
         gate = getattr(self.ctx, "leds", None)
-        if gate is not None and bx - LED_SLOP <= x < bx + bw + LED_SLOP and by - LED_SLOP <= y < by + bh + LED_SLOP:
+        if gate is not None and _hit(LED_BOX, LED_SLOP, x, y):
             gate.toggle()  # the loop repaints (take_changed)
             return
-        if self.alert_box is not None:
-            bx, by, bw, bh = self.alert_box
-            if bx - SIGN_SLOP <= x < bx + bw + SIGN_SLOP and by - SIGN_SLOP <= y < by + bh + SIGN_SLOP:
-                self.ctx.goto = nav.ALERTS  # the loop switches (presto#52), lit or not
-                return
+        if self.alert_box is not None and _hit(self.alert_box, SIGN_SLOP, x, y):
+            self.ctx.goto = nav.ALERTS  # the loop switches (presto#52), lit or not
+            return
         if self.sights.minutes and x >= SUMMON_X and y < SUMMON_Y and self.sights.kind is None:
             self.sights.trigger(sightings.pick(self.sights.last, random.random()), now)  # summon one
         else:

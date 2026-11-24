@@ -1,18 +1,21 @@
 """The back LEDs' kill switch: Home's LED button, or http://presto:8767/leds.
 
 Off means off until it's switched on again, by the button or over the LAN, and a restart
-keeps it off (a marker file on the flash). Gate stands in for the Presto: every LED write
-goes through it, so each screen's lights, the lamp follower and the update's show all go
-dark without knowing about it; everything else passes through to the Presto.
+keeps it off (a marker file on the SD card: a flash write with the display running
+deadlocks the firmware, homelab-context gotchas.md). Gate stands in for the Presto: every
+LED write goes through it, so each screen's lights, the lamp follower and the update's
+show all go dark without knowing about it; everything else passes through to the Presto.
 """
 
+import os
+
 COUNT = 7  # the Presto's back LEDs
-MARKER = "/leds_off"  # present: off
+MARKER = "/sd/leds_off"  # present: off
 
 
 def _exists(path):
     try:
-        open(path).close()
+        os.stat(path)
         return True
     except OSError:
         return False
@@ -22,8 +25,18 @@ class Gate:
     def __init__(self, presto, marker=MARKER):
         self._presto = presto
         self.marker = marker
-        self.off = _exists(marker)
+        self.off = False
         self.changed = False  # switched since the loop last looked (take_changed)
+
+    def load(self):
+        """Off if it was switched off before the restart: once the card is mounted."""
+        self.off = _exists(self.marker)
+        if self.off:
+            self._blank()
+
+    def _blank(self):
+        for i in range(COUNT):
+            self._presto.set_led_rgb(i, 0, 0, 0)
 
     def __getattr__(self, name):  # display, touch, update, set_backlight...
         return getattr(self._presto, name)
@@ -47,14 +60,11 @@ class Gate:
             if off:
                 open(self.marker, "w").close()
             else:
-                import os
-
                 os.remove(self.marker)
         except OSError as e:  # the switch still holds until a restart
             print("[neon] leds marker:", repr(e))
         if off:
-            for i in range(COUNT):
-                self._presto.set_led_rgb(i, 0, 0, 0)
+            self._blank()
         self.changed = True
         return True
 
