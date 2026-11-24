@@ -22,6 +22,11 @@ SIGN_SLOP = 6  # px around it that still count as a tap on it
 SIGN_POST_INSET = 5  # px from each side of the cabinet to its post
 SIGN_ZONE = (120, 200)  # the buildings it may stand on: their middle, clear of the right tap band
 DEAD_TUBE = (52, 44, 66)  # unlit neon glass
+# The back LEDs' kill switch (leds.py): a small LED button low on the left, over the
+# skyline, clear of the left and bottom tap bands. Lit cyan while they're on, struck out
+# while off.
+LED_BOX = (nav.EDGE + 4, H - nav.EDGE - 14, 22, 12)  # x, y, w, h
+LED_SLOP = 4  # px around it that still count as a tap on it
 ARROW_SCALE = 1
 _AW, _AH = 9 * ARROW_SCALE, 5 * ARROW_SCALE  # sprites.ARROW pointing up: 9x5, quiet beside the city
 ARROW_AT = {  # top-left corners; left and right sit below the forecast
@@ -240,6 +245,11 @@ class Home:
 
     def tap(self, x, y):
         now = time.ticks_ms()
+        bx, by, bw, bh = LED_BOX
+        gate = getattr(self.ctx, "leds", None)
+        if gate is not None and bx - LED_SLOP <= x < bx + bw + LED_SLOP and by - LED_SLOP <= y < by + bh + LED_SLOP:
+            gate.toggle()  # the loop repaints (take_changed)
+            return
         if self.alert_box is not None:
             bx, by, bw, bh = self.alert_box
             if bx - SIGN_SLOP <= x < bx + bw + SIGN_SLOP and by - SIGN_SLOP <= y < by + bh + SIGN_SLOP:
@@ -317,6 +327,24 @@ class Home:
         self._clock(d, p, now_ms)
         self._forecast(d, p)
         self._arms(d, p, now_ms)
+        self._led_button(d, p)
+
+    def _led_button(self, d, p):
+        """The LED kill switch: LED in cyan while they're on; faint and struck out while off."""
+        gate = getattr(self.ctx, "leds", None)
+        if gate is None:
+            return
+        x, y, w, h = LED_BOX
+        off = gate.off
+        d.set_pen(p.line if off else p.cyan_glow)  # its frame
+        d.rectangle(x, y, w, h)
+        d.set_pen(p.night)
+        d.rectangle(x + 1, y + 1, w - 2, h - 2)
+        d.set_pen(p.faint if off else p.cyan)
+        d.text("LED", x + (w - d.measure_text("LED", 1)) // 2 + 1, y + 2, w, 1)
+        if off:
+            d.set_pen(p.red)
+            d.line(x + 2, y + h - 3, x + w - 3, y + 2)
 
     def _alert_sign(self, d, p, now_ms):
         """The pager's billboard. All clear: ALERT in dark tubes. Firing: lit in the worst

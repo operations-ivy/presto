@@ -2,6 +2,8 @@
 
     GET /room.json   {"up", "temperature_f", "humidity", "pressure_hpa", "lux"}  (Home Assistant)
     GET /metrics     presto_room_* in Prometheus' text format                   (Prometheus)
+    GET /leds        {"on": true|false}: the back LEDs' kill switch (leds.py)
+    POST /leds/off, /leds/on, /leds/toggle   switch them, answering the same
 
 on port 8767. A reading older than FRESH_MS counts as offline: "up" false, nulls in the
 JSON, and only presto_room_sensor_up 0 in the metrics.
@@ -101,15 +103,34 @@ def request_path(raw):
     return (parts[0], parts[1].split("?")[0])
 
 
-def respond(method, path, room, now_ms):
+LED_ACTIONS = {"/leds/off": True, "/leds/on": False}  # path -> off; /leds/toggle flips
+
+
+def leds_document(leds):
+    return json.dumps({"on": not leds.off})
+
+
+def respond(method, path, room, now_ms, leds=None):
     """(status line, content type, body) for one request."""
+    if leds is not None and method == "POST" and (path in LED_ACTIONS or path == "/leds/toggle"):
+        if path == "/leds/toggle":
+            leds.toggle()
+        else:
+            leds.switch(LED_ACTIONS[path])
+        return "200 OK", "application/json", leds_document(leds)
     if method not in ("GET", "HEAD"):
-        return "405 Method Not Allowed", "text/plain", "GET only\n"
+        return "405 Method Not Allowed", "text/plain", "GET only (POST: /leds/off, /leds/on, /leds/toggle)\n"
+    if path == "/leds" and leds is not None:
+        return "200 OK", "application/json", leds_document(leds)
     if path == "/room.json":
         return "200 OK", "application/json", json.dumps(document(room, now_ms))
     if path == "/metrics":
-        return "200 OK", "text/plain; version=0.0.4", metrics(room, now_ms)
-    return "404 Not Found", "text/plain", "/room.json or /metrics\n"
+        body = metrics(room, now_ms)
+        if leds is not None:
+            body += "# HELP presto_leds_on 1 while the back LEDs are on (not switched off).\n"
+            body += "# TYPE presto_leds_on gauge\npresto_leds_on %d\n" % (0 if leds.off else 1)
+        return "200 OK", "text/plain; version=0.0.4", body
+    return "404 Not Found", "text/plain", "/room.json, /metrics or /leds\n"
 
 
 def http(status, content_type, body, head=False):
@@ -127,11 +148,11 @@ def _errno(e):
 
 
 class Server:
-    def __init__(self, room, port=PORT, sockets=None):
+    def __init__(self, room, port=PORT, sockets=None, leds=None):
         if sockets is None:
             import socket as sockets
         self.sockets = sockets  # the module, or the tests' fakes
-        self.room, self.port = room, port
+        self.room, self.port, self.leds = room, port, leds
         self.listener = None
         self.clients = []  # [socket, bytes so far, ticks_ms accepted]
         self.served = 0
@@ -147,7 +168,7 @@ class Server:
             s.close()
             raise
         self.listener = s
-        print("[neon] room sensor on :%d (/room.json, /metrics)" % self.port)
+        print("[neon] room sensor on :%d (/room.json, /metrics, /leds)" % self.port)
 
     def step(self, net_up, now_ms):
         """Between frames: listen once the Wi-Fi is up, take one connection, answer whole requests."""
@@ -195,7 +216,7 @@ class Server:
         if b"\r\n\r\n" not in cl[1] and len(cl[1]) < MAX_REQUEST:
             return
         method, path = request_path(cl[1]) or ("", "")
-        status, ctype, body = respond(method, path, self.room, now_ms)
+        status, ctype, body = respond(method, path, self.room, now_ms, self.leds)
         try:
             c.setblocking(True)
             c.settimeout(1)  # a few hundred bytes into an empty send buffer: immediate
