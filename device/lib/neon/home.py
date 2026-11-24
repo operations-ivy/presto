@@ -22,6 +22,11 @@ SIGN_SLOP = 6  # px around it that still count as a tap on it
 SIGN_POST_INSET = 5  # px from each side of the cabinet to its post
 SIGN_ZONE = (120, 200)  # the buildings it may stand on: their middle, clear of the right tap band
 DEAD_TUBE = (52, 44, 66)  # unlit neon glass
+# The back LEDs' kill switch (leds.py): a small LED button in the far lower-left corner
+# (the user: clear of the name signs). It's inside the bottom tap band, so Home claims
+# taps on it first (claims()). Lit cyan while they're on, struck out while off.
+LED_BOX = (2, H - 14, 22, 12)  # x, y, w, h
+LED_SLOP = 4  # px around it that still count as a tap on it
 ARROW_SCALE = 1
 _AW, _AH = 9 * ARROW_SCALE, 5 * ARROW_SCALE  # sprites.ARROW pointing up: 9x5, quiet beside the city
 ARROW_AT = {  # top-left corners; left and right sit below the forecast
@@ -30,6 +35,12 @@ ARROW_AT = {  # top-left corners; left and right sit below the forecast
     "left": (1, 152 - _AW // 2),
     "right": (W - 1 - _AH, 152 - _AW // 2),
 }
+
+
+def _hit(box, slop, x, y):
+    """A tap on (x, y, w, h) or within slop px of it."""
+    bx, by, bw, bh = box
+    return bx - slop <= x < bx + bw + slop and by - slop <= y < by + bh + slop
 
 
 class Home:
@@ -238,13 +249,18 @@ class Home:
     def exit(self):
         pass
 
+    def claims(self, x, y):
+        """A tap Home takes before the edge bands do: the LED button, in the corner."""
+        return getattr(self.ctx, "leds", None) is not None and _hit(LED_BOX, LED_SLOP, x, y)
+
     def tap(self, x, y):
         now = time.ticks_ms()
-        if self.alert_box is not None:
-            bx, by, bw, bh = self.alert_box
-            if bx - SIGN_SLOP <= x < bx + bw + SIGN_SLOP and by - SIGN_SLOP <= y < by + bh + SIGN_SLOP:
-                self.ctx.goto = nav.ALERTS  # the loop switches (presto#52), lit or not
-                return
+        if self.claims(x, y):
+            self.ctx.leds.toggle()  # the loop repaints (take_changed)
+            return
+        if self.alert_box is not None and _hit(self.alert_box, SIGN_SLOP, x, y):
+            self.ctx.goto = nav.ALERTS  # the loop switches (presto#52), lit or not
+            return
         if self.sights.minutes and x >= SUMMON_X and y < SUMMON_Y and self.sights.kind is None:
             self.sights.trigger(sightings.pick(self.sights.last, random.random()), now)  # summon one
         else:
@@ -317,6 +333,24 @@ class Home:
         self._clock(d, p, now_ms)
         self._forecast(d, p)
         self._arms(d, p, now_ms)
+        self._led_button(d, p)
+
+    def _led_button(self, d, p):
+        """The LED kill switch: LED in cyan while they're on; faint and struck out while off."""
+        gate = getattr(self.ctx, "leds", None)
+        if gate is None:
+            return
+        x, y, w, h = LED_BOX
+        off = gate.off
+        d.set_pen(p.line if off else p.cyan_glow)  # its frame
+        d.rectangle(x, y, w, h)
+        d.set_pen(p.night)
+        d.rectangle(x + 1, y + 1, w - 2, h - 2)
+        d.set_pen(p.faint if off else p.cyan)
+        d.text("LED", x + (w - d.measure_text("LED", 1)) // 2 + 1, y + 2, w, 1)
+        if off:
+            d.set_pen(p.red)
+            d.line(x + 2, y + h - 3, x + w - 3, y + 2)
 
     def _alert_sign(self, d, p, now_ms):
         """The pager's billboard. All clear: ALERT in dark tubes. Firing: lit in the worst

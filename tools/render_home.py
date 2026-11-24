@@ -114,7 +114,7 @@ def defaults():
     raise SystemExit("no DEFAULTS in app.py")
 
 
-def ctx_for(display, signs, alerts):
+def ctx_for(display, signs, alerts, leds_off=False):
     from neon import pager, theme
 
     c = types.SimpleNamespace()
@@ -139,6 +139,7 @@ def ctx_for(display, signs, alerts):
     # "stale": no answer yet, and long past due
     c.pager = p
     c.goto = None
+    c.leds = types.SimpleNamespace(off=leds_off)  # Home's LED button
     return c
 
 
@@ -149,6 +150,7 @@ def main():
     ap.add_argument("--alerts", default="none", choices=("off", "none", "warning", "critical", "stale"))
     ap.add_argument("--at-ms", type=int, default=5000, help="ms since boot (the critical blink's phase)")
     ap.add_argument("--frames", type=int, default=1)
+    ap.add_argument("--leds-off", action="store_true", help="the LED button as switched off")
     ap.add_argument("--scale", type=int, default=2, help="PNG scale (the panel doubles 240 to 480)")
     args = ap.parse_args()
 
@@ -162,7 +164,7 @@ def main():
     from neon import home
 
     d = Display()
-    ctx = ctx_for(d, json.loads(args.signs), args.alerts)
+    ctx = ctx_for(d, json.loads(args.signs), args.alerts, args.leds_off)
     if args.alerts == "stale":
         clock["ms"] = 10**8
     screen = home.Home(ctx)

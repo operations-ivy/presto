@@ -27,6 +27,7 @@ Navigation is by taps (swipes do nothing): each edge has a 64 px tap band.
 | On Home, tap the ALERT billboard on the rooftops (right of centre), lit or dark | opens ALERTS |
 | In ALERTS, tap the bottom edge | goes Home |
 | Two-finger tap | Home, from anywhere |
+| On Home, tap LED (far lower-left corner) | switches the back LEDs off; tap again for on (struck out while off) |
 | Any other tap | the app's own action (Photos: right half next, left half previous; Home: glitch; ALERTS: an alert's summary, SILENCE 1H, back to the list) |
 | No touch for `idle_seconds` | nothing by default: Photos opens only by hand (the user, 2026-11-21); an `idle_screen` goes there |
 
@@ -87,6 +88,11 @@ chimes with a bell envelope at `chirp_volume`.
   face the wall; dark when it's off. While Home Assistant can't be reached (or
   there's no `HA_TOKEN`) they change with the screen, at full brightness. A dark
   room only dims the backlight: the LEDs stay on, where they show best.
+- **LED kill switch** (`leds.py`): Home's LED button, or over the LAN on the room
+  sensor's port: `curl -X POST http://presto:8767/leds/off` (`/leds/on`,
+  `/leds/toggle`; `GET /leds` answers `{"on": ...}`; `presto_leds_on` in `/metrics`).
+  Off is off for every screen, the lamp follower and the update's show, until
+  it's switched on again; a restart keeps it (`/sd/leds_off` on the card).
 
 Style: overwatch's palette (night violet, neon magenta, cyan, amber) plus
 Blade Runner's sodium amber, 2049's dust orange and the Matrix's phosphor

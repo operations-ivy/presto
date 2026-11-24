@@ -2,7 +2,7 @@
 
 import time
 
-from neon import card, conf, fx, nav, pager, roomhttp, services, theme, uplink
+from neon import card, conf, fx, leds, nav, pager, roomhttp, services, theme, uplink
 
 DEFAULTS = {
     "idle_seconds": 14400,  # 4 h with no touch: go to idle_screen, if one is set
@@ -46,8 +46,10 @@ class Ctx:
 def run(presto, secrets):
     from neon import home, screens
 
+    presto = leds.Gate(presto)  # every LED write goes through the kill switch (Home's LED button)
     d = presto.display
     ctx = Ctx()
+    ctx.leds = presto
     ctx.presto, ctx.display = presto, d
     ctx.secrets = secrets
     ctx.settings = s = conf.load("/settings.yaml", DEFAULTS)
@@ -59,12 +61,13 @@ def run(presto, secrets):
     ctx.clock = services.Clock(s["utc_offset"], None if s["dst"] == "none" else s["dst"])
     ctx.weather = services.Weather(secrets, ctx.fahrenheit)
     ctx.room = services.Room(ctx.fahrenheit, s["temp_offset_c"])
-    room_server = roomhttp.Server(ctx.room, s["room_port"]) if s["room_port"] else None
+    room_server = roomhttp.Server(ctx.room, s["room_port"], leds=presto) if s["room_port"] else None
     ctx.uplink = uplink.Uplink(s["brick_feed"])  # presto-feed: Brick's pages and Weather's rooms
     ctx.pager = pager.Pager(s["alerts_url"], s["alerts_minutes"] * 60)  # presto-alerts (presto#52)
     ctx.goto = None  # a screen asks for a switch (Home's badge -> ALERTS); the loop does it
     chirp = services.Chirp(s["chirp"], s["chirp_volume"])
     card.mount()
+    presto.load()  # the LED switch as it was left (on the card)
     from neon import photosync
 
     ctx.feed = photosync.Feed(s["photo_feed"], s["feed_minutes"] * 60)
@@ -160,7 +163,9 @@ def run(presto, secrets):
                         switch(nav.HOME)
                 elif g == "tap":
                     before = plus.current
-                    target = plus.tap(x0, y0, now)
+                    # a button inside an edge band (Home's LED switch) is the screen's, not the band's
+                    claimed = hasattr(cur, "claims") and cur.claims(x0, y0)
+                    target = None if claimed else plus.tap(x0, y0, now)
                     if target is None:
                         cur.tap(x0, y0)  # not a navigation band: the app's own tap
                         if ctx.goto:  # it asked for another screen (Home's badge)
@@ -205,6 +210,11 @@ def run(presto, secrets):
             ctx.ota.step(ctx.net, last_touch, now)
             if ctx.ota_shown:  # a download that didn't end in a restart: the LEDs come back
                 ctx.ota_shown, ctx.lamp_rgb = False, None
+                cur.leds(presto, now)
+            if presto.take_changed():  # the LED switch, from Home's button or the LAN
+                services.log("leds " + ("off" if presto.off else "on"))
+                cur.dirty = True  # Home's button shows it
+                ctx.lamp_rgb = None  # back on: the screen's own, until the lamp follower repaints
                 cur.leds(presto, now)
             if time.ticks_diff(now, last_light) > 1000:
                 last_light = now
