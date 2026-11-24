@@ -22,10 +22,10 @@ SIGN_SLOP = 6  # px around it that still count as a tap on it
 SIGN_POST_INSET = 5  # px from each side of the cabinet to its post
 SIGN_ZONE = (120, 200)  # the buildings it may stand on: their middle, clear of the right tap band
 DEAD_TUBE = (52, 44, 66)  # unlit neon glass
-# The back LEDs' kill switch (leds.py): a small LED button low on the left, over the
-# skyline, clear of the left and bottom tap bands. Lit cyan while they're on, struck out
-# while off.
-LED_BOX = (nav.EDGE + 4, H - nav.EDGE - 14, 22, 12)  # x, y, w, h
+# The back LEDs' kill switch (leds.py): a small LED button in the far lower-left corner
+# (the user: clear of the name signs). It's inside the bottom tap band, so Home claims
+# taps on it first (claims()). Lit cyan while they're on, struck out while off.
+LED_BOX = (2, H - 14, 22, 12)  # x, y, w, h
 LED_SLOP = 4  # px around it that still count as a tap on it
 ARROW_SCALE = 1
 _AW, _AH = 9 * ARROW_SCALE, 5 * ARROW_SCALE  # sprites.ARROW pointing up: 9x5, quiet beside the city
@@ -249,11 +249,14 @@ class Home:
     def exit(self):
         pass
 
+    def claims(self, x, y):
+        """A tap Home takes before the edge bands do: the LED button, in the corner."""
+        return getattr(self.ctx, "leds", None) is not None and _hit(LED_BOX, LED_SLOP, x, y)
+
     def tap(self, x, y):
         now = time.ticks_ms()
-        gate = getattr(self.ctx, "leds", None)
-        if gate is not None and _hit(LED_BOX, LED_SLOP, x, y):
-            gate.toggle()  # the loop repaints (take_changed)
+        if self.claims(x, y):
+            self.ctx.leds.toggle()  # the loop repaints (take_changed)
             return
         if self.alert_box is not None and _hit(self.alert_box, SIGN_SLOP, x, y):
             self.ctx.goto = nav.ALERTS  # the loop switches (presto#52), lit or not

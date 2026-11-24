@@ -163,7 +163,9 @@ def run(presto, secrets):
                         switch(nav.HOME)
                 elif g == "tap":
                     before = plus.current
-                    target = plus.tap(x0, y0, now)
+                    # a button inside an edge band (Home's LED switch) is the screen's, not the band's
+                    claimed = hasattr(cur, "claims") and cur.claims(x0, y0)
+                    target = None if claimed else plus.tap(x0, y0, now)
                     if target is None:
                         cur.tap(x0, y0)  # not a navigation band: the app's own tap
                         if ctx.goto:  # it asked for another screen (Home's badge)

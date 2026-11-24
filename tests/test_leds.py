@@ -93,3 +93,12 @@ def test_a_marker_that_cant_be_written_still_switches_them_off(tmp_path):
     assert g.switch(True)
     assert g.off
     assert presto.writes == [("rgb", i, 0, 0, 0) for i in range(leds.COUNT)]
+
+
+def test_homes_led_button_sits_in_the_corner_of_the_bottom_band():
+    from neon import home, nav
+
+    x, y, w, h = home.LED_BOX
+    assert (x, y + h) <= (4, home.H)  # the far lower-left corner
+    assert nav.zone(x + w // 2, y + h // 2) == "down"  # in the band: Home claims it (claims())
+    assert not home._hit(home.LED_BOX, home.LED_SLOP, home.W // 2, home.H - 4)  # the band's middle still opens its arm
